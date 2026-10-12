@@ -36,7 +36,11 @@ function connect() {
     }
   };
   ws.onclose = () => { $('#conn').textContent = '● reconnecting'; setTimeout(connect, 1500); };
-  ws.onopen = () => { $('#conn').textContent = ''; };
+  ws.onopen = () => {
+    $('#conn').textContent = '';
+    // Tell the fortress Jav's real timezone (the phone's Linux layer thinks it's UTC).
+    api('POST', '/api/client', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(() => {});
+  };
 }
 
 // ------------------------------------------------------------------ panels
@@ -138,6 +142,8 @@ function renderTopbar() {
   if (alerts) base.insertAdjacentHTML('beforeend', `<span class="badge">${alerts}</span>`);
 }
 
+const DAYN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const dayText = (d) => (d.length === 7 ? 'Every day' : d.join() === '1,2,3,4,5' ? 'Weekdays' : d.join() === '0,6' ? 'Weekends' : d.map(i => DAYN[i]).join(' '));
 const sessionRow = () => { const r = state.usage?.rows || []; return r.find(x => x.group === 'session' && x.active) || r.find(x => x.group === 'session') || null; };
 function resetsIn(iso) {
   if (!iso) return '';
@@ -237,6 +243,7 @@ function mountSession() {
   body.innerHTML = `
     <div id="s-head"></div>
     <div id="s-alert"></div>
+    <div id="s-sched"></div>
     <div id="s-log" class="log"></div>
     <form id="s-form" class="composer">
       <textarea id="s-input" rows="1" placeholder="Orders for this survivor…"></textarea>
@@ -289,12 +296,15 @@ function refreshSession() {
     alert = `<div class="alert"><b>Lidia doesn't know how to continue:</b><p>${esc(s.pendingQuestion)}</p><p class="muted">Your answer goes to ${esc(s.name)}, and Lidia remembers it for next time.</p></div>`;
   }
   $('#s-alert').innerHTML = alert;
+  const jobs = (state.schedules || []).filter(j => j.sessionId === s.id && j.enabled);
+  $('#s-sched').innerHTML = jobs.length ? `<div class="sched">${jobs.map(j => `<div class="sched-row"><b>${esc(j.time)}</b><span>${esc(dayText(j.days))} · ${esc(j.instruction)}</span><button class="small danger" data-unsched="${esc(j.id)}">X</button></div>`).join('')}</div>` : '';
+  $('#s-sched').querySelectorAll('[data-unsched]').forEach(b => b.onclick = () => api('DELETE', `/api/schedules/${b.dataset.unsched}`));
   $('#s-alert').querySelectorAll('[data-allow]').forEach(b => b.onclick = () =>
     api('POST', `/api/sessions/${s.id}/permission`, { permissionId: s.pendingPermission.id, allow: b.dataset.allow === '1' }));
   renderLog($('#s-log'), s.log);
 }
 
-const ROLE = { jav: 'Jav', lidia: 'Lidia', claude: 'Owner', tool: 'Tool', system: 'System', critic: 'Peer review' };
+const ROLE = { jav: 'Jav', lidia: 'Lidia', claude: 'Owner', tool: 'Tool', system: 'System', critic: 'Peer review', schedule: 'Alarm' };
 function renderLog(el, log) {
   // Only rebuild when something new arrived, so text selection and COPIED states survive refreshes.
   const key = `${log.length}:${log[log.length - 1]?.ts || 0}`;
@@ -554,6 +564,9 @@ function mountSettings() {
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
     </form>
+    <h4>Schedules</h4>
+    <p class="muted small">The fortress is the alarm clock (your phone has no cron). Times are in ${esc(st.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)}. Agents and Lidia add these themselves when you ask for something at a time.</p>
+    <div id="g-sched">${(state.schedules || []).filter(j => j.enabled).map(j => `<div class="sched-row"><b>${esc(j.time)}</b><span>${esc(j.agent)} · ${esc(dayText(j.days))} · ${esc(j.instruction)}</span><button class="small danger" data-unsched="${esc(j.id)}">X</button></div>`).join('') || '<p class="muted">Nothing scheduled.</p>'}</div>
     <h4>Claude account</h4>
     <div id="g-health" class="card"><div class="muted">Checking…</div></div>
     <h4>Home screen</h4>
@@ -562,6 +575,7 @@ function mountSettings() {
     <p class="muted small" ${installPrompt ? 'hidden' : ''}>No install button? In Chrome open the ⋮ menu → <b>Add to Home screen</b> → Install.</p>
     <h4>Voice</h4>
     <p class="muted">${voice.voiceSupported ? 'Tap <b>TALK</b> (or press <kbd>M</kbd> on a keyboard) and speak. Start with “Lidia, …” or a dweller’s name to address them; otherwise it goes to whoever is open.' : 'Your browser has no speech recognition. Use Chrome or Edge.'}</p>`;
+  $('#g-sched').querySelectorAll('[data-unsched]').forEach(b => b.onclick = async () => { await api('DELETE', `/api/schedules/${b.dataset.unsched}`); b.closest('.sched-row').remove(); });
   api('GET', '/api/health').then(h => {
     const line = h.mock ? '<b>Mock mode.</b> Survivors are fake; no Claude usage.'
       : !h.subscription ? '<b class="red">Not signed in.</b> On the phone run <code>fortress login</code>, then <code>/login</code> with your Claude account.'

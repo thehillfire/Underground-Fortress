@@ -14,6 +14,7 @@ import { MOCK, API_KEY_STRIPPED } from './agent.js';
 import { MODELS } from './lidia.js';
 import { ensureAssets } from './assets.js';
 import { refreshUsage, startUsagePolling } from './usage.js';
+import { startScheduler, removeJob, addJob } from './schedule.js';
 
 const PORT = Number(process.env.PORT || 4321);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -73,6 +74,14 @@ app.put('/api/plan', wrap((r) => {
   store.changed();
 }));
 app.get('/api/models', wrap(() => MODELS));
+// The phone's browser knows Jav's real timezone (the Ubuntu layer thinks it's UTC).
+app.post('/api/client', wrap((r) => {
+  const t = String(r.body.tz || '');
+  try { new Intl.DateTimeFormat('en-US', { timeZone: t }); } catch { throw new Error('bad timezone'); }
+  if (t && store.state.settings.timezone !== t) { store.state.settings.timezone = t; store.changed(); }
+}));
+app.post('/api/schedules', wrap((r) => addJob({ ...r.body, by: 'jav' })));
+app.delete('/api/schedules/:id', wrap((r) => ({ ok: removeJob(r.params.id) })));
 app.post('/api/usage/refresh', wrap(async () => { await refreshUsage(); return store.state.usage; }));
 
 // Repositories
@@ -131,6 +140,7 @@ for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end']) sessions.e
 
 await ensureAssets();
 startUsagePolling();
+startScheduler(sessions.send);
 server.listen(PORT, HOST, () => {
   console.log(`\n  ⛏  Underground Fortress is open at http://${HOST}:${PORT}${MOCK ? '  (mock mode: no real Claude calls)' : ''}\n`);
 });

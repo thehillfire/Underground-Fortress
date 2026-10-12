@@ -11,6 +11,7 @@ import { store } from './store.js';
 import { mcpServersFor } from './connectors.js';
 import * as sessions from './sessions.js';
 import * as skills from './skills.js';
+import { captainScheduleTools, tz } from './schedule.js';
 
 export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'];
 
@@ -93,6 +94,7 @@ const TOOLS = [
   tool('install_skills', 'Install skills by name for every agent, or pass ["starter"] for the full starter armory (design, frontend, testing, planning, debugging, review).',
     { names: z.array(z.string()) },
     async ({ names }) => ok(await (names.length === 1 && names[0] === 'starter' ? skills.installStarter() : skills.installByName(names)))),
+  ...captainScheduleTools((n) => find(n)),
   tool('set_standing_orders', 'Replace the standing orders you use to judge reports. Only when Jav changes policy.', { text: z.string() },
     async ({ text }) => { store.state.standingOrders = text; store.changed(); return ok('Standing orders updated.'); }),
 ];
@@ -151,6 +153,7 @@ Jav says: ${text}`;
 You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, create agents (each gets a room), change an agent's model, hand agents data, stop agents, and update your standing orders.
 Arm your agents: check list_skills, and when work needs design, frontend, testing, planning, debugging or review, make sure the right skills are installed (find_skills / install_skills) and tell the agent which to use.
 Your agents are business owners. They improve their own work and review each other automatically; you decide direction, unblock them, and keep Jav informed.
+Schedules: Jav's timezone is ${tz()}. The fortress is the scheduler (there is no cron on this phone): use schedule_task / list_schedules / cancel_schedule for anything at a time or recurring.
 Money is Jav's alone: you and the agents cannot spend, buy, pay or transfer. Anything like that waits for Jav's tap in the app.
 You can also use every app Jav has connected (tools named mcp__…: calendar, email, docs, CRM and the like). When Jav asks for something an app can do (put it on the calendar, check email, look something up), do it yourself right away with that tool and confirm what you did, with the specifics (date, time, title, link). If no connected tool can do it, say which app Jav needs to connect in the Armory. For long or hands-on work (code, files, research), assign an agent instead.
 Use your tools; never just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;

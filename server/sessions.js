@@ -7,6 +7,7 @@ import { runTurn, runReview } from './agent.js';
 import { moneyHooks } from './guard.js';
 import { installed as installedSkills } from './skills.js';
 import { peakUsage, refreshSoon } from './usage.js';
+import { agentScheduleServer, tz } from './schedule.js';
 import * as lidia from './lidia.js';
 import { mcpServersFor } from './connectors.js';
 
@@ -100,7 +101,7 @@ export function stop(sid) {
 export function send(sid, text, from = 'jav') {
   const s = store.session(sid);
   if (!s || !text?.trim()) return;
-  if (from === 'jav' || from === 'jav-via-lidia') {
+  if (from === 'jav' || from === 'jav-via-lidia' || from === 'schedule') {
     s.autoTurns = 0;
     s.refineRound = 0;      // new direction from Jav: fresh improvement budget
     if (s.pendingQuestion) {
@@ -133,7 +134,7 @@ async function turn(s, text, from) {
       resume: s.sdkSessionId,
       model: s.model || store.state.settings.model,
       permissionMode: store.state.settings.permissionMode,
-      mcpServers: mcpServersFor(),
+      mcpServers: { ...mcpServersFor(), fortress: agentScheduleServer(s.id) },
       appendSystem: ownerBrief(s),
       hooks: moneyHooks((tool, input, reason) => holdMoney(s, tool, input, reason)),
       abortController: ac,
@@ -182,6 +183,7 @@ Operate like an owner who wants the best possible result:
 - Critique yourself before reporting: score your output 1-10 on outcome, quality, and how good it looks and reads to a human, and fix the weakest part if you can.
 - Use skills. ${skills.length ? `Installed skills: ${skills.join(', ')}.` : 'Check which skills are installed.'} Whenever one fits (planning, design, frontend, testing, debugging, docs, review), invoke it instead of improvising.
 - Use Jav's connected apps (calendar, email, docs, CRM…) whenever they help.
+- Time and schedules: Jav's timezone is ${tz()} (this machine's clock says UTC; ignore that). There is no cron or OS scheduler here. For anything at a time of day or recurring, use your schedule_task tool: the fortress wakes you up and hands you the instruction.
 - Fellow owners will review your work and send fixes. Take them seriously, and push back with reasons when they're wrong.
 - MONEY RULE: never spend money. Never buy, pay, subscribe, transfer, book, or enter payment details. Prepare it fully and ask Jav; the fortress blocks those actions until Jav approves.
 Your captain is Lidia. End every turn with a short report: what you did, your self-score (n/10), what's next, and any blocker.`;

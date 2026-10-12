@@ -31,6 +31,7 @@ const DEFAULT_STATE = {
   lidiaChat: [],     // Jav <-> Lidia conversation
   lidiaSessionId: null,
   reports: [],       // every report Lidia handled
+  schedules: [],     // fortress alarm clock: agents woken at set times
   // "What you would have spent": API list-price cost of all work, run on the subscription.
   spend: { total: 0, lidia: 0, months: {} },
   plan: { name: 'Claude Max 20x', monthlyUsd: 200 },
