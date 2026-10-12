@@ -21,6 +21,8 @@ const DEFAULT_STATE = {
     refineRounds: 2,              // improvement rounds after an agent hits its goal
     reviewEvery: 3,               // peer check-up every N reports
     reserveAt: 85,                // pause self-improvement when session/weekly usage passes this %
+    chatStyle: 'modern',          // texting look: modern | retro
+    chatColor: '#b0222a',         // texting color (hex)
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
   projects: [],      // rooms; each holds any number of agents
@@ -110,7 +112,15 @@ class Store extends EventEmitter {
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
 // Settings Jav (and Lidia, on his behalf) may change.
-export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort'];
+export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort', 'chatStyle', 'chatColor'];
+
+/** Validate a settings change; returns an error message or null. */
+export function checkSettings(c) {
+  if ('permissionMode' in c && !PERMISSION_MODES.includes(c.permissionMode)) return `permissionMode must be one of ${PERMISSION_MODES.join(', ')}`;
+  if ('chatStyle' in c && !['modern', 'retro'].includes(c.chatStyle)) return 'chatStyle must be modern or retro';
+  if ('chatColor' in c && !/^#[0-9a-f]{6}$/i.test(c.chatColor)) return 'chatColor must be a hex color like #2f7de0';
+  return null;
+}
 
 export const store = new Store();
 export const id = (p) => `${p}_${Math.random().toString(36).slice(2, 9)}`;

@@ -1,6 +1,6 @@
 // Offline shell for the home-screen app. API and live socket always go to the network.
 const CACHE = 'fortress-v1';
-const SHELL = ['/', '/style.css', '/js/main.js', '/js/game.js', '/js/assets.js', '/js/voice.js',
+const SHELL = ['/', '/style.css', '/chat.css', '/js/talk.js', '/js/themes.js', '/js/main.js', '/js/game.js', '/js/assets.js', '/js/voice.js',
   '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

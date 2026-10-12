@@ -997,6 +997,7 @@ talk.initTalk({
   api, getState: () => state,
   openSession: (id) => openSession(id),
   openDetails: (id) => openDetails(id),
+  openSettings: () => open('settings'),
   onSeen: (id) => markSeen(id),
   toast: (t) => toast(t),
   openOrders: () => open('lidia'),

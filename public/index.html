@@ -15,6 +15,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="chat.css">
 </head>
 <body>
   <canvas id="world"></canvas>
@@ -73,8 +74,19 @@
         <button class="back" id="chat-back" aria-label="Back to the bunker">&lsaquo;</button>
         <canvas id="talk-avatar" width="40" height="40"></canvas>
         <div class="who"><b id="chat-name">Lidia</b><small id="talk-status">on the bridge</small></div>
+        <button class="more" id="chat-more" aria-label="Menu">&#8942;</button>
         <button class="info" id="chat-info" aria-label="Details">i</button>
       </header>
+      <div class="chat-menu" id="chat-menu" hidden>
+        <button data-m="settings">Settings</button>
+        <button data-m="customize">Customize</button>
+      </div>
+      <div class="chat-sheet" id="chat-custom" hidden>
+        <h4>CUSTOMIZE CHAT</h4>
+        <div class="opt">Style<div class="styles" id="cc-style"></div></div>
+        <div class="opt">Color<div class="swatches" id="cc-colors"></div></div>
+        <button class="done" id="cc-done">DONE</button>
+      </div>
       <div class="bubbles" id="talk-bubbles"></div>
       <div id="react-bar" class="react-bar" hidden></div>
       <div id="talk-tray" class="att-tray" hidden></div>

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { store, ROOT, id, SETTINGS_KEYS } from './store.js';
+import { store, ROOT, id, SETTINGS_KEYS, checkSettings } from './store.js';
 import * as sessions from './sessions.js';
 import * as projects from './projects.js';
 import * as skills from './skills.js';
@@ -81,6 +81,7 @@ app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
+  const bad = checkSettings(r.body); if (bad) throw new Error(bad);
   for (const k of SETTINGS_KEYS) if (k in r.body) store.state.settings[k] = r.body[k];
   store.changed();
 }));

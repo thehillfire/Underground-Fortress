@@ -7,7 +7,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { oneShot, runCaptain, mockTools } from './agent.js';
-import { store, SETTINGS_KEYS, PERMISSION_MODES } from './store.js';
+import { store, SETTINGS_KEYS, PERMISSION_MODES, checkSettings } from './store.js';
 import * as repos from './repos.js';
 import { mcpServersFor } from './connectors.js';
 import { promptWithFiles } from './files.js';
@@ -131,12 +131,12 @@ const TOOLS = [
     }),
   tool('get_settings', 'The fortress settings Jav can change (and so can you).', {},
     async () => ok(Object.fromEntries(SETTINGS_KEYS.map(k => [k, store.state.settings[k] ?? null])))),
-  tool('update_settings', `Change fortress settings, like Jav in SETUP. Keys: model (default agent model), lidiaModel (yours), effort / lidiaEffort (low|medium|high|xhigh|max or ""), permissionMode (fortress default: default|acceptEdits|auto|plan|bypassPermissions), lidiaAutopilot (you answer agents' reports automatically), maxAutoTurns (nudges in a row before asking Jav), autoApproveConnectors, refineEnabled (self-improvement and peer reviews), refineRounds, reviewEvery, reserveAt (usage % where extras pause), skillSources (GitHub repos for the skill finder).`,
+  tool('update_settings', `Change fortress settings, like Jav in SETUP. Keys: model (default agent model), lidiaModel (yours), effort / lidiaEffort (low|medium|high|xhigh|max or ""), permissionMode (fortress default: default|acceptEdits|auto|plan|bypassPermissions), lidiaAutopilot (you answer agents' reports automatically), maxAutoTurns (nudges in a row before asking Jav), autoApproveConnectors, refineEnabled (self-improvement and peer reviews), refineRounds, reviewEvery, reserveAt (usage % where extras pause), chatStyle (modern|retro) and chatColor (hex) for how your texting looks, skillSources (GitHub repos for the skill finder).`,
     { changes: z.record(z.string(), z.any()) },
     async ({ changes }) => {
       const bad = Object.keys(changes).filter(k => !SETTINGS_KEYS.includes(k));
       if (bad.length) return fail(`Not settings: ${bad.join(', ')}. Valid: ${SETTINGS_KEYS.join(', ')}`);
-      if ('permissionMode' in changes && !PERMISSION_MODES.includes(changes.permissionMode)) return fail(`permissionMode must be one of ${PERMISSION_MODES.join(', ')}`);
+      const invalid = checkSettings(changes); if (invalid) return fail(invalid);
       Object.assign(store.state.settings, changes); store.changed();
       return ok(`Updated: ${Object.entries(changes).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}.`);
     }),

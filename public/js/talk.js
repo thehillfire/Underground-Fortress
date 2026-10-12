@@ -5,6 +5,7 @@
 import { art } from './assets.js';
 import { rich } from './rich.js';
 import { makeAttach, fileChips } from './attach.js';
+import { STYLES, COLORS, applyTheme, DEFAULT_THEME } from './themes.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -45,6 +46,14 @@ export function initTalk(c) {
   $('#talk-mic').onclick = () => ctx.startMic();
   $('#chat-back').onclick = () => closeTalk();
   $('#chat-info').onclick = () => (peer === 'lidia' ? openTalk('dialogue') : ctx.openDetails(peer));
+  $('#chat-more').onclick = (e) => { e.stopPropagation(); $('#chat-custom').hidden = true; $('#chat-menu').hidden = !$('#chat-menu').hidden; };
+  $('#chat-menu').onclick = (e) => {
+    const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return;
+    $('#chat-menu').hidden = true;
+    if (m === 'settings') { closeTalk(); ctx.openSettings(); } else openCustomize();
+  };
+  document.addEventListener('pointerdown', (e) => { if (!$('#chat-menu').hidden && !e.target.closest('#chat-menu, #chat-more')) $('#chat-menu').hidden = true; });
+  $('#cc-done').onclick = () => { $('#chat-custom').hidden = true; };
   $('#chat-prev').onclick = () => hop(-1);
   $('#chat-next').onclick = () => hop(1);
   bindBubbles();
@@ -86,6 +95,7 @@ export function openChat(id) {
 
 export function closeTalk() {
   $('#talk').hidden = true;
+  $('#chat-menu').hidden = true; $('#chat-custom').hidden = true;
   clearInterval(typing); typing = null;
   mode = null;
   closeReactBar();
@@ -132,10 +142,49 @@ function hop(dir) {
   openChat(list[(i + dir + list.length) % list.length]);
 }
 
+// ------------------------------------------------------------------ look (themes only change CSS, never behavior)
+let chosen = null;   // what Jav just picked, until the saved setting catches up
+function theme(st) {
+  const set = st?.settings || {};
+  if (chosen && set.chatStyle === chosen.chatStyle && set.chatColor === chosen.chatColor) chosen = null;
+  applyTheme($('#talk-chat'), chosen || set);
+}
+export const applyChatTheme = theme;
+
+function openCustomize() {
+  $('#chat-custom').hidden = false;
+  renderCustomize();
+}
+function currentTheme() {
+  const set = ctx.getState()?.settings || {};
+  return chosen || { chatStyle: set.chatStyle || DEFAULT_THEME.chatStyle, chatColor: set.chatColor || DEFAULT_THEME.chatColor };
+}
+function renderCustomize() {
+  const t = currentTheme();
+  $('#cc-style').innerHTML = STYLES.map(s => `<button data-style="${s.id}" class="${s.id === t.chatStyle ? 'on' : ''}">${esc(s.name)}<small>${esc(s.note)}</small></button>`).join('');
+  const custom = !COLORS.some(c => c.hex.toLowerCase() === t.chatColor.toLowerCase());
+  $('#cc-colors').innerHTML = COLORS.map(c => `<button class="sw ${c.hex.toLowerCase() === t.chatColor.toLowerCase() ? 'on' : ''}" data-color="${c.hex}" style="background:${c.hex}" aria-label="${esc(c.name)}"></button>`).join('')
+    + `<label class="sw-custom ${custom ? 'on' : ''}" aria-label="Custom color"><input type="color" id="cc-pick" value="${t.chatColor}"></label>`;
+  $('#cc-style').onclick = (e) => { const b = e.target.closest('[data-style]'); if (b) pick({ chatStyle: b.dataset.style }); };
+  $('#cc-colors').onclick = (e) => { const b = e.target.closest('[data-color]'); if (b) pick({ chatColor: b.dataset.color }); };
+  $('#cc-pick').oninput = (e) => pick({ chatColor: e.target.value }, true);
+  $('#cc-pick').onchange = (e) => pick({ chatColor: e.target.value });
+}
+let saveTimer = null;
+function pick(change, quiet) {
+  chosen = { ...currentTheme(), ...change };
+  theme(ctx.getState());
+  if (!quiet) renderCustomize();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => ctx.api('PATCH', '/api/settings', { chatStyle: chosen.chatStyle, chatColor: chosen.chatColor }).catch(e => ctx.toast(e.message)), quiet ? 400 : 0);
+}
+
 // ------------------------------------------------------------------ rendering
 /** Live refresh from a state push. */
 export function update(st, opt = {}) {
-  if (!isOpen() || !st) return;
+  if (!st) return;
+  theme(st);
+  if (!isOpen()) return;
   if (mode === 'reports') renderReports(st);
   if (mode !== 'chat') return;
   const s = agent();
