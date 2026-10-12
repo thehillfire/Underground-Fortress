@@ -127,13 +127,31 @@ function refresh() {
 function renderTopbar() {
   const alerts = state.sessions.filter(s => s.status === 'needs_jav').length;
   const month = monthSpend();
-  $('#stats').innerHTML = `${state.sessions.length} alive${alerts ? ` · <b class="red">${alerts}!</b>` : ''} · <u>$${month.total.toFixed(2)}</u>${state.mock ? ' · <i>mock</i>' : ''}`;
+  const sess = sessionRow();
+  $('#stats').innerHTML = `${state.sessions.length} alive${alerts ? ` · <b class="red">${alerts}!</b>` : ''} · ${sess ? `<u>${sess.percent}% used</u>` : `<u>$${month.total.toFixed(2)}</u>`}${state.mock ? ' · <i>mock</i>' : ''}`;
+  const bar = $('#usage-bar');
+  bar.hidden = !sess;
+  if (sess) { bar.firstElementChild.style.width = `${Math.min(100, sess.percent)}%`; bar.className = sess.percent >= 90 ? 'crit' : sess.percent >= 75 ? 'warn' : ''; }
   document.title = alerts ? `(${alerts}!) Underground Fortress` : 'Underground Fortress';
   const base = $('#nav [data-tab="base"]');
   base.querySelector('.badge')?.remove();
   if (alerts) base.insertAdjacentHTML('beforeend', `<span class="badge">${alerts}</span>`);
 }
 
+const sessionRow = () => { const r = state.usage?.rows || []; return r.find(x => x.group === 'session' && x.active) || r.find(x => x.group === 'session') || null; };
+function resetsIn(iso) {
+  if (!iso) return '';
+  const ms = new Date(iso) - Date.now();
+  if (ms <= 0) return 'Resets soon';
+  const m = Math.round(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return `Resets ${new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
+  return `Resets in ${h ? `${h} hr ` : ''}${m % 60} min`;
+}
+function usageRow(r) {
+  const cls = r.severity === 'critical' || r.percent >= 90 ? 'crit' : r.severity === 'warning' || r.percent >= 75 ? 'warn' : '';
+  return `<div class="u-row ${cls}"><div class="u-top"><div><b>${esc(r.label)}</b><small>${esc(resetsIn(r.resetsAt))}</small></div><span>${esc(r.percent)}% used</span></div>
+    <div class="u-bar"><i style="width:${Math.min(100, r.percent)}%"></i></div></div>`;
+}
 const monthKey = () => new Date().toISOString().slice(0, 7);
 const monthSpend = () => state.spend?.months?.[monthKey()] || { total: 0, lidia: 0, agents: {} };
 const money = (v) => `$${v >= 100 ? v.toFixed(0) : v.toFixed(2)}`;
@@ -464,14 +482,37 @@ function refreshSkills() {
 // ---- ledger: what this would have cost at API prices
 const PLANS = [['Claude Pro', 20], ['Claude Max 5x', 100], ['Claude Max 20x', 200]];
 function mountLedger() {
-  $('#panel-title').textContent = 'Ledger';
-  body.innerHTML = `<div id="lg"></div>
+  $('#panel-title').textContent = 'Usage';
+  body.innerHTML = `<div id="lg-limits"></div>
+    <h4>What this would have cost</h4><div id="lg"></div>
     <label>Your plan <select id="lg-plan">${PLANS.map(([n, v]) => `<option value="${v}" ${state.plan.monthlyUsd === v ? 'selected' : ''}>${n} · $${v}/mo</option>`).join('')}</select></label>
     <p class="muted small">Every turn is priced by Claude Code at public API list prices, so this is what pay-per-token would have cost you. Your subscription covers it: <b>$0 extra</b>. It counts against your plan's usage limits, not your wallet.</p>`;
   $('#lg-plan').onchange = (e) => { const [n, v] = PLANS.find(p => p[1] === +e.target.value); api('PUT', '/api/plan', { name: n, monthlyUsd: v }); };
   refreshLedger();
 }
+function refreshLimits() {
+  const u = state.usage;
+  const el = $('#lg-limits');
+  if (!el) return;
+  if (!u?.available || !u.rows?.length) {
+    el.innerHTML = `<div class="u-card"><h4>Plan usage limits</h4><p class="muted">${u?.error ? `Couldn't read your limits: ${esc(u.error)}` : 'No plan limits reported yet. They appear once Claude Code is signed in with your Claude account (Pro/Max). Not with an API key.'}</p>
+      <button class="small" id="u-refresh">REFRESH</button></div>`;
+  } else {
+    const sess = u.rows.filter(r => r.group === 'session'), week = u.rows.filter(r => r.group !== 'session');
+    const ago = u.ts ? Math.max(0, Math.round((Date.now() - u.ts) / 60000)) : null;
+    el.innerHTML = `<div class="u-card">
+      <h4>Plan usage limits${u.plan ? ` · ${esc(String(u.plan).toUpperCase())}` : ''}</h4>
+      ${sess.map(usageRow).join('')}
+      ${week.length ? `<h5>Weekly limits</h5>${week.map(usageRow).join('')}` : ''}
+      ${u.extra?.is_enabled ? `<p class="muted small">Extra usage: ${esc(u.extra.utilization ?? 0)}% of your monthly extra-usage limit used.</p>` : ''}
+      <div class="row u-foot"><span class="muted small">Updated ${ago == null ? '—' : ago < 1 ? 'just now' : `${ago} min ago`}${u.limited ? ` · <b class="red">limit reached</b>` : ''}</span><button class="small" id="u-refresh">REFRESH</button></div>
+      <p class="muted small">When session or weekly usage passes ${esc(state.settings.reserveAt ?? 85)}%, peer reviews and polish rounds pause so your agents don't burn the rest. Change it in SETUP.</p>
+    </div>`;
+  }
+  $('#u-refresh').onclick = async (e) => { e.currentTarget.textContent = '…'; try { await api('POST', '/api/usage/refresh'); } catch (err) { toast(err.message); } };
+}
 function refreshLedger() {
+  refreshLimits();
   const m = monthSpend(), plan = state.plan, now = new Date();
   const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const pace = m.total / Math.max(1, now.getDate()) * days;
@@ -508,6 +549,7 @@ function mountSettings() {
         <label>Peer check-up every N reports <input id="g-every" type="number" min="1" max="20" value="${st.reviewEvery}"></label></div>
       <label class="inline"><input type="checkbox" id="g-autoconn" ${st.autoApproveConnectors !== false ? 'checked' : ''}> Agents use connected apps without asking</label>
       <p class="muted small">Money is never automatic: purchases, payments, transfers and bookings always wait for you, whatever these settings say.</p>
+      <label>Pause self-improvement when usage passes (%) <input id="g-reserve" type="number" min="10" max="100" value="${st.reserveAt ?? 85}"></label>
       <label>Max automatic nudges in a row before Lidia asks you <input id="g-max" type="number" min="1" max="50" value="${st.maxAutoTurns}"></label>
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
@@ -533,7 +575,7 @@ function mountSettings() {
     await api('PATCH', '/api/settings', { model: $('#g-model').value.trim(), lidiaModel: $('#g-lmodel').value.trim(), permissionMode: $('#g-perm').value,
       maxAutoTurns: Number($('#g-max').value) || 6, refineEnabled: $('#g-refine').checked,
       refineRounds: Math.max(0, Number($('#g-rounds').value) || 0), reviewEvery: Math.max(1, Number($('#g-every').value) || 3),
-      autoApproveConnectors: $('#g-autoconn').checked, skillSources: $('#g-src').value.split('\n').map(s => s.trim()).filter(Boolean) });
+      autoApproveConnectors: $('#g-autoconn').checked, reserveAt: Math.min(100, Math.max(10, Number($('#g-reserve').value) || 85)), skillSources: $('#g-src').value.split('\n').map(s => s.trim()).filter(Boolean) });
     toast('Settings saved');
   };
 }

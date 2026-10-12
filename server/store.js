@@ -20,12 +20,14 @@ const DEFAULT_STATE = {
     refineEnabled: true,          // owners keep improving and review each other without Jav
     refineRounds: 2,              // improvement rounds after an agent hits its goal
     reviewEvery: 3,               // peer check-up every N reports
+    reserveAt: 85,                // pause self-improvement when session/weekly usage passes this %
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
   sessions: [],
   repos: [],
   connectors: [],
-  liveConnectors: {}, // what Claude Code actually loaded, incl. claude.ai connectors
+  liveConnectors: {},
+  usage: null,       // plan limits: current session + weekly, like Claude's /usage // what Claude Code actually loaded, incl. claude.ai connectors
   lidiaChat: [],     // Jav <-> Lidia conversation
   lidiaSessionId: null,
   reports: [],       // every report Lidia handled

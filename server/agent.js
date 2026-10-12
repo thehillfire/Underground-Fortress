@@ -4,6 +4,10 @@ import { moneyHooks } from './guard.js';
 
 export const MOCK = process.env.FORTRESS_MOCK === '1';
 
+// Anyone interested in plan rate-limit events (usage meter).
+export const rateLimitListeners = new Set();
+const noteRateLimit = (m) => { if (m.type === 'rate_limit_event') for (const fn of rateLimitListeners) { try { fn(m.rate_limit_info); } catch {} } };
+
 // Subscription only: never let an API key (pay-per-token) reach the Claude sessions.
 export const API_KEY_STRIPPED = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 delete process.env.ANTHROPIC_API_KEY;
@@ -37,6 +41,7 @@ export async function runTurn(opts) {
   });
   let out = { result: '', isError: false, costUsd: 0, sessionId: resume };
   for await (const m of q) {
+    noteRateLimit(m);
     if (m.type === 'system' && m.subtype === 'init') {
       out.sessionId = m.session_id;
       onInit?.(m);
@@ -73,6 +78,7 @@ export async function oneShot({ system, prompt, model }) {
   });
   let text = '', costUsd = 0;
   for await (const m of q) {
+    noteRateLimit(m);
     if (m.type === 'assistant') {
       for (const b of m.message?.content || []) if (b.type === 'text') text += b.text;
     } else if (m.type === 'result') { if (m.result) text = m.result; costUsd = m.total_cost_usd || 0; }
@@ -107,6 +113,7 @@ export async function runCaptain({ prompt, resume, model, system, server, extraS
   });
   const out = { text: '', costUsd: 0, sessionId: resume };
   for await (const m of q) {
+    noteRateLimit(m);
     if (m.type === 'system' && m.subtype === 'init') { out.sessionId = m.session_id; onInit?.(m); }
     else if (m.type === 'assistant') {
       for (const b of m.message?.content || []) if (b.type === 'tool_use') onTool?.(b.name, b.input);
@@ -136,6 +143,7 @@ export async function runReview({ cwd, prompt, system, model }) {
   });
   let text = '', costUsd = 0;
   for await (const m of q) {
+    noteRateLimit(m);
     if (m.type === 'assistant') { for (const b of m.message?.content || []) if (b.type === 'text') text = b.text; }
     else if (m.type === 'result') { if (m.result) text = m.result; costUsd = m.total_cost_usd || 0; }
   }

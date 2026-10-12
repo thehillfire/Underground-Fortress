@@ -6,6 +6,7 @@ import { store, id, WORKSPACES } from './store.js';
 import { runTurn, runReview } from './agent.js';
 import { moneyHooks } from './guard.js';
 import { installed as installedSkills } from './skills.js';
+import { peakUsage, refreshSoon } from './usage.js';
 import * as lidia from './lidia.js';
 import { mcpServersFor } from './connectors.js';
 
@@ -208,6 +209,13 @@ async function report(s, result, isError) {
 
   store.report({ sessionId: s.id, name: s.name, decision: d.decision, note: d.note || '', instruction: d.instruction, question: d.question });
   const cfg = st.settings;
+  refreshSoon();
+  // Near the plan limit: keep doing the work, but skip the optional extras (reviews, polish rounds).
+  const peak = peakUsage();
+  const tight = peak != null && peak >= (cfg.reserveAt ?? 85);
+  if (tight && cfg.refineEnabled && !s.warnedTight) { s.warnedTight = true; store.feed(`Usage at ${peak}%: pausing peer reviews and polish rounds to save your limit.`, 'alert'); }
+  if (!tight) s.warnedTight = false;
+  const refine = cfg.refineEnabled && !tight;
   s.errorStreak = isError ? (s.errorStreak || 0) + 1 : 0;
   s.reportsSinceReview = (s.reportsSinceReview || 0) + 1;
   const falling = s.errorStreak >= 2 || d.health === 'stalled';
@@ -215,14 +223,14 @@ async function report(s, result, isError) {
   if (d.decision === 'continue') {
     s.autoTurns += 1;
     // Falling behind, or due for a check-up: a fellow owner reviews before the next step.
-    if (cfg.refineEnabled && (falling || s.reportsSinceReview >= cfg.reviewEvery)) {
+    if (refine && (falling || s.reportsSinceReview >= cfg.reviewEvery)) {
       return peerReview(s, falling ? 'rescue' : 'checkup', d.instruction);
     }
     store.feed(`Lidia → ${s.name}: ${d.note || d.instruction}`, 'lidia', s.id);
     turn(s, d.instruction, 'lidia');
   } else if (d.decision === 'done') {
     // "Done" isn't the end for an owner: improvement rounds until the budget is spent.
-    if (cfg.refineEnabled && (s.refineRound || 0) < cfg.refineRounds) {
+    if (refine && (s.refineRound || 0) < cfg.refineRounds) {
       s.refineRound = (s.refineRound || 0) + 1;
       store.feed(`${s.name} hit the goal. Improvement round ${s.refineRound}/${cfg.refineRounds}.`, 'lidia', s.id);
       return peerReview(s, 'improve');

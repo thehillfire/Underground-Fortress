@@ -13,6 +13,7 @@ import { CATALOG, searchRegistry, redact } from './connectors.js';
 import { MOCK, API_KEY_STRIPPED } from './agent.js';
 import { MODELS } from './lidia.js';
 import { ensureAssets } from './assets.js';
+import { refreshUsage, startUsagePolling } from './usage.js';
 
 const PORT = Number(process.env.PORT || 4321);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -60,7 +61,7 @@ app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
-  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery'];
+  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt'];
   for (const k of allowed) if (k in r.body) store.state.settings[k] = r.body[k];
   store.changed();
 }));
@@ -72,6 +73,7 @@ app.put('/api/plan', wrap((r) => {
   store.changed();
 }));
 app.get('/api/models', wrap(() => MODELS));
+app.post('/api/usage/refresh', wrap(async () => { await refreshUsage(); return store.state.usage; }));
 
 // Repositories
 app.post('/api/repos', wrap((r) => repos.connect(r.body.url)));
@@ -128,6 +130,7 @@ store.on('change', () => {
 for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
 
 await ensureAssets();
+startUsagePolling();
 server.listen(PORT, HOST, () => {
   console.log(`\n  ⛏  Underground Fortress is open at http://${HOST}:${PORT}${MOCK ? '  (mock mode: no real Claude calls)' : ''}\n`);
 });
