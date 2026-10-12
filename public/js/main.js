@@ -4,6 +4,7 @@ import * as game from './game.js';
 import * as voice from './voice.js';
 import * as talk from './talk.js';
 import { rich, copyBtn, bindCopy } from './rich.js';
+import { makeAttach, fileChips } from './attach.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -48,6 +49,8 @@ function connect() {
 const ARMORY = ['repos', 'connectors', 'skills'];
 function open(t, sel = null) {
   if (t === 'base') return close();
+  if (t !== 'session') { $('#panel-menu')?.remove(); }
+  $('#agent-menu')?.remove();
   tab = t; selected = sel ?? (t === 'lidia' ? 'lidia' : null);
   game.select(selected);
   panel.classList.add('open');
@@ -62,6 +65,7 @@ function open(t, sel = null) {
   refresh();
 }
 function close() {
+  $('#panel-menu')?.remove(); $('#agent-menu')?.remove();
   tab = null; selected = null; game.select(null);
   panel.classList.remove('open');
   panel.setAttribute('aria-hidden', 'true');
@@ -240,48 +244,98 @@ const MODEL_OPTS = [['', 'Fortress default'], ['opus', 'Opus (latest)'], ['sonne
   ['claude-opus-5-5', 'Opus 5.5'], ['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-haiku-5-5', 'Haiku 5.5'], ['claude-fable-5-1', 'Fable 5.1']];
 const STATUS_LABEL = { idle: 'Idle', working: 'Working', reporting: 'Reporting to Lidia', needs_jav: 'Needs you', done: 'Done', error: 'Error' };
 
+const EFFORTS = [['', 'Default'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']];
+// Which log entries belong in the chat with Jav, and which are behind-the-scenes work.
+const CHAT_ROLES = new Set(['jav', 'claude', 'schedule']);
+let sessionTab = 'chat';
+let sessionAttach = null;
+
 function mountSession() {
+  sessionTab = 'chat';
   body.innerHTML = `
     <div id="s-head"></div>
     <div id="s-alert"></div>
-    <div id="s-sched"></div>
+    <div class="seg s-tabs" id="s-tabs">
+      <button data-st="chat" class="active">CHAT</button><button data-st="work">WORK <em id="s-work-n"></em></button><button data-st="mission">MISSION</button>
+    </div>
     <div id="s-log" class="log"></div>
+    <div id="s-mission" hidden></div>
+    <div id="s-tray" class="att-tray" hidden></div>
     <form id="s-form" class="composer">
-      <textarea id="s-input" rows="1" placeholder="Orders for this survivor…"></textarea>
+      <button type="button" class="att-btn" id="s-cam" title="Camera"><span class="ico-cam"></span></button>
+      <button type="button" class="att-btn" id="s-files" title="Photos and files"><span class="ico-clip"></span></button>
+      <textarea id="s-input" rows="1" placeholder="Message this survivor…"></textarea>
       <button type="button" class="mic-inline" title="Speak"><span class="mic-ico"></span></button>
       <button type="submit" class="primary">SEND</button>
-    </form>
-    <details class="sub"><summary>Room settings</summary><div id="s-settings"></div></details>`;
+    </form>`;
   const form = $('#s-form'), input = $('#s-input');
-  form.onsubmit = async (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = ''; await api('POST', `/api/sessions/${selected}/message`, { text: t }); };
+  sessionAttach = makeAttach({ tray: $('#s-tray'), cameraBtn: $('#s-cam'), filesBtn: $('#s-files') });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const t = input.value.trim();
+    if (!t && !sessionAttach.count()) return;
+    const btn = form.querySelector('[type=submit]'); btn.disabled = true;
+    try {
+      const files = await sessionAttach.take();
+      input.value = '';
+      await api('POST', `/api/sessions/${selected}/message`, { text: t, files });
+      setSessionTab('chat');
+    } catch (err) { toast(err.message); } finally { btn.disabled = false; }
+  };
   input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); form.requestSubmit(); } };
   $('.mic-inline', form).onclick = () => startMic();
-  mountSessionSettings();
+  $('#s-tabs').onclick = (e) => { const b = e.target.closest('[data-st]'); if (b) setSessionTab(b.dataset.st); };
+  // ⋮ menu lives in the panel header while an agent is open
+  $('#panel-menu')?.remove();
+  $('#panel-close').insertAdjacentHTML('beforebegin', '<button id="panel-menu" aria-label="Agent options">&#8942;</button>');
+  $('#panel-menu').onclick = toggleAgentMenu;
 }
 
-function mountSessionSettings() {
-  const s = state?.sessions.find(x => x.id === selected);
+function setSessionTab(t) {
+  sessionTab = t;
+  document.querySelectorAll('#s-tabs [data-st]').forEach(b => b.classList.toggle('active', b.dataset.st === t));
+  $('#s-log').hidden = t === 'mission';
+  $('#s-mission').hidden = t !== 'mission';
+  $('#s-log').dataset.key = '';
+  refreshSession();
+}
+
+/** ⋮ menu: model, effort, room, repo, name, stop, evict. */
+function toggleAgentMenu() {
+  const old = $('#agent-menu');
+  if (old) return old.remove();
+  const s = state.sessions.find(x => x.id === selected);
   if (!s) return;
-  $('#s-settings').innerHTML = `
-    <label>Name <input id="ss-name" value="${esc(s.name)}"></label>
-    <label>Goal <textarea id="ss-goal" rows="3">${esc(s.goal)}</textarea></label>
-    <label>Room <select id="ss-room">${['workshop', 'library', 'server', 'lab'].map(r => `<option ${r === s.roomType ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
-    <label>Model <select id="ss-model">${MODEL_OPTS.map(([v, l]) => `<option value="${v}" ${v === (s.model || '') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-    <label>Repository <select id="ss-repo"><option value="">(own workspace)</option>${state.repos.map(r => `<option value="${r.id}" ${r.id === s.repoId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
-    <div class="row"><button id="ss-save" class="primary">Save</button><button id="ss-stop">Stop turn</button><button id="ss-del" class="danger">Evict</button></div>
-    <p class="muted">Claude session id: <code>${esc(s.sdkSessionId || '—')}</code></p>`;
-  $('#ss-save').onclick = () => api('PATCH', `/api/sessions/${s.id}`, { name: $('#ss-name').value, goal: $('#ss-goal').value, roomType: $('#ss-room').value, repoId: $('#ss-repo').value || null, model: $('#ss-model').value });
-  $('#ss-stop').onclick = () => api('POST', `/api/sessions/${s.id}/stop`);
-  $('#ss-del').onclick = async () => { if (confirm(`Evict ${s.name}? Their room is torn down.`)) { await api('DELETE', `/api/sessions/${s.id}`); close(); } };
+  const chips = (name, opts, cur) => `<div class="opt-chips" data-opt="${name}">${opts.map(([v, l]) => `<button type="button" data-v="${esc(v)}" class="${v === (cur || '') ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>`;
+  panel.insertAdjacentHTML('beforeend', `<div id="agent-menu">
+    <h4>Model</h4>${chips('model', MODEL_OPTS, s.model)}
+    <h4>Effort</h4>${chips('effort', EFFORTS, s.effort)}
+    <p class="muted small">Higher effort thinks longer and uses more of your plan. Takes effect on the next message.</p>
+    <h4>Room</h4>${chips('roomType', [['workshop', 'Workshop'], ['library', 'Archive'], ['server', 'Reactor'], ['lab', 'Bio lab']], s.roomType)}
+    <label>Name <input id="am-name" value="${esc(s.name)}"></label>
+    <label>Repository <select id="am-repo"><option value="">(own workspace)</option>${state.repos.map(r => `<option value="${r.id}" ${r.id === s.repoId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
+    <div class="row am-actions"><button id="am-stop">STOP TURN</button><button id="am-del" class="danger">EVICT</button><button id="am-done" class="primary">DONE</button></div>
+  </div>`);
+  const m = $('#agent-menu');
+  m.querySelectorAll('.opt-chips').forEach(g => g.onclick = (e) => {
+    const b = e.target.closest('[data-v]'); if (!b) return;
+    g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    api('PATCH', `/api/sessions/${s.id}`, { [g.dataset.opt]: b.dataset.v }).then(() => toast(`${s.name}: ${b.textContent}`));
+  });
+  $('#am-name').onchange = (e) => api('PATCH', `/api/sessions/${s.id}`, { name: e.target.value });
+  $('#am-repo').onchange = (e) => api('PATCH', `/api/sessions/${s.id}`, { repoId: e.target.value || null });
+  $('#am-stop').onclick = () => { api('POST', `/api/sessions/${s.id}/stop`); m.remove(); };
+  $('#am-del').onclick = async () => { if (confirm(`Evict ${s.name}? Their room is torn down.`)) { m.remove(); await api('DELETE', `/api/sessions/${s.id}`); close(); } };
+  $('#am-done').onclick = () => m.remove();
 }
 
 function refreshSession() {
   const s = state.sessions.find(x => x.id === selected);
   if (!s) { close(); return; }
   $('#panel-title').textContent = s.name;
-  $('#s-head').innerHTML = `<div class="chips"><span class="chip st-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>
-    <span class="chip">${esc(s.roomType)}</span><span class="chip">${esc(s.model || 'default model')}</span><span class="chip">${esc(s.activity || '')}</span><span class="chip">would-cost $${(s.costUsd || 0).toFixed(2)}</span>${s.lastReview ? `<span class="chip st-${s.lastReview.score >= 8 ? 'done' : s.lastReview.score >= 5 ? 'working' : 'needs_jav'}">peer score ${esc(s.lastReview.score)}/10</span>` : ''}</div>
-    ${s.goal ? `<p class="goal"><b>Goal:</b> ${esc(s.goal)}</p>` : ''}`;
+  const modelName = (MODEL_OPTS.find(([v]) => v === (s.model || ''))?.[1] || s.model);
+  $('#s-head').innerHTML = `<div class="chips"><span class="chip st-${esc(s.status)}">${STATUS_LABEL[s.status] || esc(s.status)}</span>
+    <span class="chip">${esc(modelName)}${s.effort ? ` · ${esc(s.effort)}` : ''}</span><span class="chip">${esc(s.activity || '')}</span>${s.lastReview ? `<span class="chip st-${s.lastReview.score >= 8 ? 'done' : s.lastReview.score >= 5 ? 'working' : 'needs_jav'}">${esc(s.lastReview.score)}/10</span>` : ''}</div>`;
   let alert = '';
   if (s.pendingPermission?.kind === 'money') {
     alert = `<div class="alert money"><b>MONEY: only you can approve this</b>
@@ -297,23 +351,41 @@ function refreshSession() {
     alert = `<div class="alert"><b>Lidia doesn't know how to continue:</b><p>${esc(s.pendingQuestion)}</p><p class="muted">Your answer goes to ${esc(s.name)}, and Lidia remembers it for next time.</p></div>`;
   }
   $('#s-alert').innerHTML = alert;
-  const jobs = (state.schedules || []).filter(j => j.sessionId === s.id && j.enabled);
-  $('#s-sched').innerHTML = jobs.length ? `<div class="sched">${jobs.map(j => `<div class="sched-row"><b>${esc(j.time)}</b><span>${esc(dayText(j.days))} · ${esc(j.instruction)}</span><button class="small danger" data-unsched="${esc(j.id)}">X</button></div>`).join('')}</div>` : '';
-  $('#s-sched').querySelectorAll('[data-unsched]').forEach(b => b.onclick = () => api('DELETE', `/api/schedules/${b.dataset.unsched}`));
   $('#s-alert').querySelectorAll('[data-allow]').forEach(b => b.onclick = () =>
     api('POST', `/api/sessions/${s.id}/permission`, { permissionId: s.pendingPermission.id, allow: b.dataset.allow === '1' }));
-  renderLog($('#s-log'), s.log);
+
+  const work = s.log.filter(e => !CHAT_ROLES.has(e.role));
+  $('#s-work-n').textContent = work.length ? work.length : '';
+  if (sessionTab === 'mission') return renderMission(s);
+  renderLog($('#s-log'), sessionTab === 'work' ? work : s.log.filter(e => CHAT_ROLES.has(e.role)), s.id,
+    sessionTab === 'work' ? 'Behind the scenes: Lidia\'s instructions, peer reviews and tool use show up here.' : 'No messages yet. Say hi, send a photo, or give this survivor a job.');
+}
+
+function renderMission(s) {
+  const el = $('#s-mission');
+  if (el.contains(document.activeElement)) return;   // don't wipe what Jav is typing
+  const jobs = (state.schedules || []).filter(j => j.sessionId === s.id && j.enabled);
+  el.innerHTML = `
+    <label>Mission <textarea id="sm-goal" rows="4">${esc(s.goal)}</textarea></label>
+    <div class="row"><button class="primary small" id="sm-save">SAVE MISSION</button></div>
+    <h4>Schedule</h4>
+    ${jobs.length ? `<div class="sched">${jobs.map(j => `<div class="sched-row"><b>${esc(j.time)}</b><span>${esc(dayText(j.days))} · ${esc(j.instruction)}</span><button class="small danger" data-unsched="${esc(j.id)}">X</button></div>`).join('')}</div>` : '<p class="muted small">Nothing scheduled. Ask this survivor (or Lidia) to do something at a set time.</p>'}
+    <h4>Peer reviews</h4>
+    ${(s.scores || []).slice(-6).reverse().map(r => `<div class="ledger-row"><span>${esc(r.by)} · ${esc(r.kind)}</span><i style="width:${r.score * 10}%"></i><b>${esc(r.score)}/10</b></div>`).join('') || '<p class="muted small">No reviews yet.</p>'}
+    <p class="muted small">Would have cost $${(s.costUsd || 0).toFixed(2)} at API prices · Claude session <code>${esc((s.sdkSessionId || '—').slice(0, 8))}</code></p>`;
+  $('#sm-save').onclick = () => api('PATCH', `/api/sessions/${s.id}`, { goal: $('#sm-goal').value }).then(() => toast('Mission saved'));
+  el.querySelectorAll('[data-unsched]').forEach(b => b.onclick = () => api('DELETE', `/api/schedules/${b.dataset.unsched}`));
 }
 
 const ROLE = { jav: 'Jav', lidia: 'Lidia', claude: 'Owner', tool: 'Tool', system: 'System', critic: 'Peer review', schedule: 'Alarm' };
-function renderLog(el, log) {
+function renderLog(el, log, owner, empty = 'No activity yet.') {
   // Only rebuild when something new arrived, so text selection and COPIED states survive refreshes.
-  const key = `${log.length}:${log[log.length - 1]?.ts || 0}`;
+  const key = `${owner}:${log.length}:${log[log.length - 1]?.ts || 0}:${log.filter(e => e.queued).length}`;
   if (el.dataset.key === key) return;
   el.dataset.key = key;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  el.innerHTML = log.map(e => `<div class="msg m-${esc(e.role)}"><span class="who">${ROLE[e.role] || esc(e.role)}${e.tool ? ` · ${esc(e.tool)}` : ''}${e.role === 'tool' ? '' : copyBtn(e.text)}</span><div class="msg-body">${rich(e.text)}</div></div>`).join('')
-    || '<p class="muted">No activity yet. Give this dweller something to do.</p>';
+  el.innerHTML = log.map(e => `<div class="msg m-${esc(e.role)}"><span class="who">${ROLE[e.role] || esc(e.role)}${e.tool ? ` · ${esc(e.tool)}` : ''}${e.queued ? ' · QUEUED, DELIVERED AFTER THIS TURN' : ''}${e.role === 'tool' || !e.text ? '' : copyBtn(e.text)}</span>${e.text ? `<div class="msg-body">${rich(e.text)}</div>` : ''}${fileChips(owner, e.files)}</div>`).join('')
+    || `<p class="muted">${esc(empty)}</p>`;
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
 

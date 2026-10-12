@@ -9,6 +9,7 @@ import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { oneShot, runCaptain, mockTools } from './agent.js';
 import { store } from './store.js';
 import { mcpServersFor } from './connectors.js';
+import { promptWithFiles } from './files.js';
 import * as sessions from './sessions.js';
 import * as skills from './skills.js';
 import { captainScheduleTools, tz } from './schedule.js';
@@ -75,9 +76,14 @@ const TOOLS = [
       const s = sessions.create({ name, goal, roomType, model: model || '', repoId: r?.id || null, by: 'lidia' });
       return ok(`${s.name} moved into a new ${s.roomType}${r ? ` on ${r.name}` : ''} and started on: ${goal}`);
     }),
-  tool('set_model', `Change which Claude model an agent uses from their next turn. Options: ${MODELS.filter(Boolean).join(', ')} (or "" for default).`,
-    { name: z.string(), model: z.string() },
-    async ({ name, model }) => { const s = find(name); if (!s) return fail(`No agent named ${name}`); sessions.update(s.id, { model }); return ok(`${s.name} now runs on ${model || 'the default model'}.`); }),
+  tool('set_model', `Change an agent's Claude model and/or effort level from their next turn. Models: ${MODELS.filter(Boolean).join(', ')} (or "" for default). Effort: low, medium, high, xhigh, max (or "" for default); higher effort thinks longer and uses more of Jav's plan.`,
+    { name: z.string(), model: z.string().optional(), effort: z.enum(['', 'low', 'medium', 'high', 'xhigh', 'max']).optional() },
+    async ({ name, model, effort }) => {
+      const s = find(name); if (!s) return fail(`No agent named ${name}`);
+      const patch = {}; if (model !== undefined) patch.model = model; if (effort !== undefined) patch.effort = effort;
+      sessions.update(s.id, patch);
+      return ok(`${s.name}: model ${s.model || 'default'}, effort ${s.effort || 'default'}.`);
+    }),
   tool('provide_data', "Hand an agent data: saved as a file in their workspace and they're told where it is.",
     { name: z.string(), title: z.string(), content: z.string() },
     async ({ name, title, content }) => {
@@ -139,7 +145,7 @@ Rules: choose "continue" only when the next step clearly follows from the goal, 
 }
 
 // ------------------------------------------------------------------ texting Jav
-export async function chat(text, onTool) {
+export async function chat(text, saved, onTool) {
   const st = store.state;
   const reports = (st.reports || []).slice(-12).map(r => `- ${r.name}: ${r.decision} — ${r.note || ''}`).join('\n') || '(none yet)';
   const prompt = `${briefing()}
@@ -157,7 +163,8 @@ Schedules: Jav's timezone is ${tz()}. The fortress is the scheduler (there is no
 Money is Jav's alone: you and the agents cannot spend, buy, pay or transfer. Anything like that waits for Jav's tap in the app.
 You can also use every app Jav has connected (tools named mcp__…: calendar, email, docs, CRM and the like). When Jav asks for something an app can do (put it on the calendar, check email, look something up), do it yourself right away with that tool and confirm what you did, with the specifics (date, time, title, link). If no connected tool can do it, say which app Jav needs to connect in the Armory. For long or hands-on work (code, files, research), assign an agent instead.
 Use your tools; never just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
-  const out = await runCaptain({ prompt, resume: st.lidiaSessionId, model: st.settings.lidiaModel, system,
+  const out = await runCaptain({ prompt: promptWithFiles(prompt, saved, { inlineText: true }), resume: st.lidiaSessionId,
+    model: st.settings.lidiaModel, effort: st.settings.lidiaEffort || undefined, system,
     server: captainServer(), extraServers: mcpServersFor(), onTool, onInit: noteConnectors });
   if (out.sessionId) st.lidiaSessionId = out.sessionId;
   store.addSpend(out.costUsd, 'lidia');

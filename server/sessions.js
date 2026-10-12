@@ -8,6 +8,8 @@ import { moneyHooks } from './guard.js';
 import { installed as installedSkills } from './skills.js';
 import { peakUsage, refreshSoon } from './usage.js';
 import { agentScheduleServer, tz } from './schedule.js';
+import { saveUploads, promptWithFiles, fileMeta } from './files.js';
+import { DATA_DIR } from './store.js';
 import * as lidia from './lidia.js';
 import { mcpServersFor } from './connectors.js';
 
@@ -29,7 +31,7 @@ function setStatus(s, status, activity = s.activity) {
   store.changed();
 }
 
-function cwdFor(s) {
+export function cwdFor(s) {
   if (s.repoId) {
     const repo = store.state.repos.find(r => r.id === s.repoId);
     if (repo?.status === 'ready') return repo.path;
@@ -86,7 +88,7 @@ export function remove(sid) {
 export function update(sid, patch) {
   const s = store.session(sid);
   if (!s) return null;
-  for (const k of ['name', 'goal', 'roomType', 'repoId', 'model']) if (k in patch) s[k] = patch[k];
+  for (const k of ['name', 'goal', 'roomType', 'repoId', 'model', 'effort']) if (k in patch) s[k] = patch[k];
   store.changed();
   return s;
 }
@@ -98,9 +100,12 @@ export function stop(sid) {
 }
 
 /** A message for a session, from Jav or Lidia. */
-export function send(sid, text, from = 'jav') {
+export const uploadDir = (s) => path.join(cwdFor(s), '.fortress', 'uploads');
+
+export function send(sid, text, from = 'jav', files = []) {
   const s = store.session(sid);
-  if (!s || !text?.trim()) return;
+  if (!s || (!text?.trim() && !files.length)) return;
+  const saved = files.length ? saveUploads(uploadDir(s), files) : [];
   if (from === 'jav' || from === 'jav-via-lidia' || from === 'schedule') {
     s.autoTurns = 0;
     s.refineRound = 0;      // new direction from Jav: fresh improvement budget
@@ -111,16 +116,19 @@ export function send(sid, text, from = 'jav') {
     }
   }
   if (running.has(sid)) {
-    s.queue.push({ text, from });
-    log(s, 'system', `Queued message from ${from === 'jav' ? 'Jav' : 'Lidia'}.`);
+    // Show it in the chat right away; it's delivered when the current turn ends.
+    const role = from === 'jav-via-lidia' ? 'lidia' : from;
+    log(s, role, text || '', { queued: true, ...(saved.length ? { files: fileMeta(saved) } : {}) });
+    s.queue.push({ text, from, saved, logged: true });
     return;
   }
-  turn(s, text, from);
+  turn(s, text, from, saved);
 }
 
-async function turn(s, text, from) {
+async function turn(s, text, from, saved = [], logged = false) {
   if (from === 'jav-via-lidia') from = 'lidia';
-  log(s, from, text);
+  if (logged) { const q = [...s.log].reverse().find(e => e.queued); if (q) delete q.queued; }
+  else log(s, from, text || '', saved.length ? { files: fileMeta(saved) } : {});
   setStatus(s, 'working', 'thinking');
   if (from === 'lidia') events.emit('bubble', { who: 'lidia', sessionId: s.id, text });
 
@@ -129,7 +137,8 @@ async function turn(s, text, from) {
   let out;
   try {
     out = await runTurn({
-      prompt: text,
+      prompt: promptWithFiles(text, saved),
+      effort: s.effort || store.state.settings.effort || undefined,
       cwd: cwdFor(s),
       resume: s.sdkSessionId,
       model: s.model || store.state.settings.model,
@@ -171,7 +180,7 @@ async function turn(s, text, from) {
 
 function drainQueue(s) {
   const next = s.queue.shift();
-  if (next) turn(s, next.text, next.from);
+  if (next) turn(s, next.text, next.from, next.saved || [], !!next.logged);
 }
 
 /** Every agent runs its room like a business it owns. */
@@ -374,15 +383,18 @@ export function provideData(sid, title, content) {
 }
 
 /** Jav texts Lidia. */
-export async function talkToLidia(text) {
+export const lidiaUploadDir = () => path.join(DATA_DIR, 'uploads');
+
+export async function talkToLidia(text, files = []) {
   const st = store.state;
-  st.lidiaChat.push({ ts: Date.now(), role: 'jav', text });
+  const saved = files.length ? saveUploads(lidiaUploadDir(), files) : [];
+  st.lidiaChat.push({ ts: Date.now(), role: 'jav', text, ...(saved.length ? { files: fileMeta(saved) } : {}) });
   store.changed();
   events.emit('bubble', { who: 'lidia-thinking' });
   const acts = [];
   let reply;
   try {
-    reply = await lidia.chat(text, (full, input) => {
+    reply = await lidia.chat(text, saved, (full, input) => {
       const [, server = '', tool = full] = /^mcp__(.+?)__(.+)$/.exec(full) || [];
       if (server === 'fortress' && (tool === 'fortress_status' || tool === 'read_agent')) return;
       const app = server === 'fortress' ? '' : `${server.replace(/^claude_ai_/, '').replace(/[_-]+/g, ' ')}: `;

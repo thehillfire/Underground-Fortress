@@ -2,6 +2,7 @@
 // a reports board, and a texting view with her.
 import { art } from './assets.js';
 import { rich, copyBtn } from './rich.js';
+import { makeAttach, fileChips } from './attach.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -11,6 +12,7 @@ let ctx = null;        // { api, getState, openSession, openOrders, startMic, on
 let mode = null;       // 'dialogue' | 'reports' | 'chat'
 let typing = null;     // typewriter timer
 let waiting = false;   // Jav sent a text, Lidia hasn't answered yet
+let attach = null;
 
 export function initTalk(c) {
   ctx = c;
@@ -20,11 +22,14 @@ export function initTalk(c) {
     if (mode !== 'chat' && e.target.closest('.talk-dialogue') && typing) finishTyping();
   });
   const form = $('#talk-form'), input = $('#talk-input');
+  attach = makeAttach({ tray: $('#talk-tray'), cameraBtn: $('#talk-cam'), filesBtn: $('#talk-files') });
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const t = input.value.trim(); if (!t) return;
+    const t = input.value.trim();
+    if (!t && !attach.count()) return;
+    const files = await attach.take();
     input.value = '';
-    await send(t);
+    await send(t, files);
   };
   input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); form.requestSubmit(); } };
   $('#talk-mic').onclick = () => ctx.startMic();
@@ -52,11 +57,12 @@ export function closeTalk() {
 }
 
 /** Send a text to Lidia (also used by the mic). */
-export async function send(text) {
+export async function send(text, files = []) {
   if (mode !== 'chat') choose('text');
   waiting = true;
-  update(ctx.getState(), { pending: text });
-  try { await ctx.api('POST', '/api/lidia', { text }); }
+  update(ctx.getState(), { pending: text || `(${files.length} attachment${files.length > 1 ? 's' : ''})` });
+  try { await ctx.api('POST', '/api/lidia', { text, files }); }
+  catch (err) { waiting = false; update(ctx.getState(), { force: true }); throw err; }
   finally { waiting = false; update(ctx.getState()); }
 }
 
@@ -107,7 +113,7 @@ export function update(st, opt = {}) {
 
 function bubble(m) {
   const acts = m.acts?.length ? `<div class="acts">${m.acts.map(a => `<span>${esc(a)}</span>`).join('')}</div>` : '';
-  return `<div class="bub ${m.role === 'jav' ? 'jav' : 'lidia'}"><div class="msg-body">${rich(m.text)}</div>${acts}<div class="bub-foot"><time>${time(m.ts)}</time>${copyBtn(m.text)}</div></div>`;
+  return `<div class="bub ${m.role === 'jav' ? 'jav' : 'lidia'}">${m.text ? `<div class="msg-body">${rich(m.text)}</div>` : ''}${fileChips('lidia', m.files)}${acts}<div class="bub-foot"><time>${time(m.ts)}</time>${copyBtn(m.text)}</div></div>`;
 }
 
 function renderReports(st) {

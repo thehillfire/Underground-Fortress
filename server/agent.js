@@ -4,6 +4,15 @@ import { moneyHooks } from './guard.js';
 
 export const MOCK = process.env.FORTRESS_MOCK === '1';
 
+/** A prompt that is content blocks (text + images) becomes a one-message input stream. */
+export function asInput(prompt) {
+  if (!Array.isArray(prompt)) return prompt;
+  return (async function* () {
+    yield { type: 'user', message: { role: 'user', content: prompt }, parent_tool_use_id: null, session_id: '' };
+  })();
+}
+const promptText = (p) => (Array.isArray(p) ? p.filter(b => b.type === 'text').map(b => b.text).join('\n') : String(p));
+
 // Anyone interested in plan rate-limit events (usage meter).
 export const rateLimitListeners = new Set();
 const noteRateLimit = (m) => { if (m.type === 'rate_limit_event') for (const fn of rateLimitListeners) { try { fn(m.rate_limit_info); } catch {} } };
@@ -22,13 +31,14 @@ const CLAUDE_PATH = process.env.FORTRESS_CLAUDE_PATH ? { pathToClaudeCodeExecuta
 export async function runTurn(opts) {
   if (MOCK) return mockTurn(opts);
   const { prompt, cwd, resume, model, permissionMode, mcpServers, appendSystem,
-          onInit, onText, onTool, canUseTool, abortController, hooks } = opts;
+          onInit, onText, onTool, canUseTool, abortController, hooks, effort } = opts;
   const q = query({
-    prompt,
+    prompt: asInput(prompt),
     options: {
       cwd,
       resume: resume || undefined,
       model: model || undefined,
+      effort: effort || undefined,
       permissionMode,
       mcpServers,
       settingSources: ['user', 'project', 'local'], // loads skills, CLAUDE.md, settings
@@ -90,14 +100,15 @@ export async function oneShot({ system, prompt, model }) {
  * Lidia's own conversation: a persistent session whose only tools are the
  * fortress controls (no shell, no files). Resumed every time Jav talks to her.
  */
-export async function runCaptain({ prompt, resume, model, system, server, extraServers = {}, onTool, onInit }) {
-  if (MOCK) return mockCaptain({ prompt, onTool });
+export async function runCaptain({ prompt, resume, model, effort, system, server, extraServers = {}, onTool, onInit }) {
+  if (MOCK) return mockCaptain({ prompt: promptText(prompt), onTool });
   const q = query({
-    prompt,
+    prompt: asInput(prompt),
     options: {
       resume: resume || undefined,
       model: model || undefined,
       systemPrompt: system,
+      effort: effort || undefined,
       tools: [],                                   // no shell, no files: she runs the place, agents do the hands-on work
       mcpServers: { fortress: server, ...extraServers },
       settingSources: ['user'],                    // loads your claude.ai connectors and user MCP servers
@@ -162,7 +173,9 @@ async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, ab
   const sessionId = resume || `mock-${Math.random().toString(36).slice(2, 10)}`;
   onInit?.({ session_id: sessionId });
   await sleep(800);
-  onText?.(`On it: "${String(prompt).slice(0, 80)}"`);
+  const said = promptText(prompt);
+  const pics = Array.isArray(prompt) ? prompt.filter(b => b.type === 'image').length : 0;
+  onText?.(pics ? `Got your ${pics} image${pics > 1 ? 's' : ''}. On it: "${said.slice(0, 60)}"` : `On it: "${said.slice(0, 80)}"`);
   const steps = 2 + Math.floor(Math.random() * 3);
   for (let i = 0; i < steps; i++) {
     if (abortController?.signal.aborted) return { result: 'Interrupted.', isError: true, costUsd: 0, sessionId };

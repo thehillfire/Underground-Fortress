@@ -38,6 +38,9 @@ You need Node 20+ and Claude Code authentication on this machine, either a logge
 | **Connectors** | MCP servers, given to every dweller. There's a quick-add shelf, a search over the official MCP registry ("any app"), and custom http/sse/stdio servers with an optional bearer token. |
 | **Skills** | The finder shallow-clones skill repos (default `anthropics/skills`, add your own in Settings), searches `SKILL.md` files, and installs to `~/.claude/skills`, so every dweller gets them. |
 | **Voice** | Press `M` or the MIC button. Start with "Lidia, …" or a dweller's name to address them. Replies are text only. Needs Chrome/Edge/Safari speech recognition. |
+| **Agent menu (⋮)** | Top right of any agent's panel: pick its model (Opus, Sonnet, Haiku, Fable) and effort (low → max), rename it, move rooms, attach a repo, stop or evict. Takes effect on its next message. Lidia's own model and effort live in SETUP. |
+| **Tabs** | Each agent's panel has CHAT (only you and the agent), WORK (Lidia's orders, peer reviews, tool calls) and MISSION (goal, scores, schedules). |
+| **Photos and files** | Camera button takes a photo in the app; the gallery button attaches photos, screenshots (take them with power + volume down first) or any file, up to 10 per message. Works for every agent and for Lidia. Images are shrunk to 1600px and the agent sees them; text files are readable in its workspace under `.fortress/uploads`. Messages sent while an agent is busy appear at once, marked QUEUED. |
 | **Chats** | Tap CHATS (top left) for everyone you can talk to: whoever needs you on top, then working, then idle, with unread counts. Tap one and the camera flies to them and opens their chat. |
 | **World** | Drag to pan, wheel or pinch to zoom, click anyone to open their panel. `L` opens Lidia, `Esc` closes. |
 | **Owners** | Every agent runs its room like a business it owns: it plans, executes, verifies, and scores itself. A fellow owner walks over every few reports to read the actual work and send a score and fixes. Agents that are failing or going in circles get a peer sent to help. After hitting a goal, owners keep improving for a set number of rounds (SETUP). |
@@ -46,7 +49,7 @@ You need Node 20+ and Claude Code authentication on this machine, either a logge
 | **Schedules** | The fortress is the alarm clock (Android has no cron). Agents and Lidia schedule work with a tool ("every weekday at 7:00…"), in your phone's timezone. Jobs missed while the phone was off run as soon as the fortress starts again. Listed in each agent's room and in SETUP. |
 | **Usage** | A red glowing bar under the top bar shows the current session (5-hour) limit; tap it for Claude-style rows: current session and weekly limits (all models, per-model), % used and reset times. The numbers are the same ones Claude Code's `/usage` reads from claude.ai (refreshed every 3 minutes and after every turn). Near your limit (85% by default) peer reviews and polish rounds pause. |
 | **Ledger** | Below the limits in the same panel to see what this month's work would have cost at API list prices, next to your plan's price ($200 for Max 20x). Broken down by survivor and Lidia, with a month-end pace. The real extra charge on your subscription is $0. |
-| **Settings** | Dweller model, Lidia's model, permission mode, max automatic nudges before Lidia asks you, voice on/off. |
+| **Settings** | Dweller model, Lidia's model, permission mode, max automatic nudges before Lidia asks you, default effort. |
 
 ## Limits worth knowing
 

@@ -16,11 +16,12 @@ import { ensureAssets } from './assets.js';
 import { refreshUsage, startUsagePolling } from './usage.js';
 import { startScheduler, removeJob, addJob } from './schedule.js';
 import * as system from './system.js';
+import { resolveUpload } from './files.js';
 
 const PORT = Number(process.env.PORT || 4321);
 const HOST = process.env.HOST || '127.0.0.1';
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '60mb' }));   // photos and files come in as base64
 app.use(express.static(path.join(ROOT, 'public')));
 
 const wrap = (fn) => async (req, res) => {
@@ -52,18 +53,26 @@ app.get('/api/health', wrap(() => {
 app.post('/api/sessions', wrap((r) => sessions.create(r.body)));
 app.patch('/api/sessions/:id', wrap((r) => sessions.update(r.params.id, r.body)));
 app.delete('/api/sessions/:id', wrap((r) => sessions.remove(r.params.id)));
-app.post('/api/sessions/:id/message', wrap((r) => sessions.send(r.params.id, r.body.text, 'jav')));
+app.post('/api/sessions/:id/message', wrap((r) => sessions.send(r.params.id, r.body.text, 'jav', r.body.files || [])));
+// Attachments, for thumbnails and downloads in the chat.
+app.get('/api/files/:owner/:name', (req, res) => {
+  const s = req.params.owner === 'lidia' ? null : store.session(req.params.owner);
+  const dir = req.params.owner === 'lidia' ? sessions.lidiaUploadDir() : s ? sessions.uploadDir(s) : null;
+  const file = dir && resolveUpload(dir, req.params.name);
+  if (!file) return res.status(404).end();
+  res.sendFile(file, { dotfiles: 'allow' });   // uploads live under .fortress/
+});
 app.post('/api/sessions/:id/stop', wrap((r) => sessions.stop(r.params.id)));
 app.post('/api/sessions/:id/permission', wrap((r) =>
   ({ ok: sessions.answerPermission(r.params.id, r.body.permissionId, !!r.body.allow) })));
 
 // Lidia
-app.post('/api/lidia', wrap((r) => sessions.talkToLidia(String(r.body.text || ''))));
+app.post('/api/lidia', wrap((r) => sessions.talkToLidia(String(r.body.text || ''), r.body.files || [])));
 app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.text || ''); store.changed(); }));
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
-  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt'];
+  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort'];
   for (const k of allowed) if (k in r.body) store.state.settings[k] = r.body[k];
   store.changed();
 }));
