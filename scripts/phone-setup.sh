@@ -115,6 +115,23 @@ FORTRESS_QUIET=1 FORTRESS_NO_AUTOSTART=1 exec fortress start
 BOOT
 chmod +x "$HOME/.termux/boot/fortress"
 
+# Let the Fortress launcher app wake the server: Termux must accept commands from other apps.
+mkdir -p "$HOME/.termux"
+if ! grep -q '^allow-external-apps' "$HOME/.termux/termux.properties" 2>/dev/null; then
+  echo 'allow-external-apps=true' >> "$HOME/.termux/termux.properties"
+fi
+termux-reload-settings 2>/dev/null || true
+
+# Optional: with Termux:Widget (F-Droid), a home-screen shortcut that wakes the fortress and opens it.
+mkdir -p "$HOME/.shortcuts"
+cat > "$HOME/.shortcuts/Fortress" <<'SHORT'
+#!/data/data/com.termux/files/usr/bin/bash
+curl -s -m 2 -o /dev/null http://127.0.0.1:4321/api/health || { FORTRESS_QUIET=1 FORTRESS_NO_AUTOSTART=1 nohup fortress start >/dev/null 2>&1 & }
+for i in $(seq 1 60); do curl -s -m 1 -o /dev/null http://127.0.0.1:4321/api/health && break; sleep 1; done
+termux-open-url http://127.0.0.1:4321
+SHORT
+chmod +x "$HOME/.shortcuts/Fortress"
+
 # Opening Termux starts the fortress (and opens the app) unless it's already running.
 if ! grep -q 'fortress-autostart' "$HOME/.bashrc" 2>/dev/null; then
   cat >> "$HOME/.bashrc" <<'RC'

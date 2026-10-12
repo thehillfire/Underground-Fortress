@@ -44,3 +44,5 @@ a.btn { display: inline-block; font-family: var(--pixel); font-size: 12px; paddi
 #login form { display: flex; flex-direction: column; gap: 10px; width: min(340px, 100%); } #login h3 { font-family: var(--pixel); color: var(--accent); margin: 0; font-weight: 400; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--accent2); outline-offset: 2px; }
 .nav6 #nav { grid-template-columns: repeat(6, 1fr); }
+
+.wake-btn { display: block; margin: 12px 0; padding: 16px; text-align: center; font-family: var(--pixel); font-size: 14px; color: #ffe3dc; background: #a3170f; border: 2px solid #ff3b2a; text-decoration: none; }

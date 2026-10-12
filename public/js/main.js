@@ -750,6 +750,10 @@ function mountSettings() {
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
     </form>
+    <h4>One-tap launcher</h4>
+    <div class="card"><div><b>Open Fortress without opening Termux</b><div class="muted small">A small Android app. Tap its icon: it wakes the fortress in the background, waits until it's up, then opens the app. Install it once (Android asks you to allow installs from this browser), open it, and allow "Run commands in Termux environment".</div></div></div>
+    <a class="btn" id="g-launcher" href="/downloads/fortress-launcher.apk" download hidden>DOWNLOAD LAUNCHER</a>
+    <p class="muted small" id="g-launcher-note">Checking…</p>
     <div id="g-appearance"></div>
     <h4>System</h4>
     <div class="card sys"><div><b id="sys-ver">Checking version…</b><div class="muted small" id="sys-changes"></div></div></div>
@@ -775,6 +779,10 @@ function mountSettings() {
     <h4>Voice</h4>
     <p class="muted">${voice.voiceSupported ? 'Tap <b>TALK</b> (or press <kbd>M</kbd> on a keyboard) and speak. Start with “Lidia, …” or a dweller’s name to address them; otherwise it goes to whoever is open.' : 'Your browser has no speech recognition. Use Chrome or Edge.'}</p>`;
   deck.mountAppearance($('#g-appearance'));
+  fetch('/downloads/fortress-launcher.apk', { method: 'HEAD' }).then(r => {
+    $('#g-launcher').hidden = !r.ok;
+    $('#g-launcher-note').textContent = r.ok ? 'After installing, you can remove the old Fortress home-screen icon and use the launcher instead.' : 'The launcher build is not on this phone yet. Update the fortress and check again.';
+  }).catch(() => {});
   loadVersion();
   $('#sys-update').onclick = async (e) => {
     const b = e.currentTarget; b.disabled = true; b.textContent = 'UPDATING…';

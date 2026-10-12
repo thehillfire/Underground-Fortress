@@ -111,10 +111,8 @@
     <div class="asleep-box">
       <h3>THE FORTRESS IS ASLEEP</h3>
       <p>The app can't reach the fortress. It runs inside <b>Termux</b> on this phone, so this isn't your Wi-Fi or mobile data: Termux was closed or stopped.</p>
-      <ol>
-        <li>Open <b>Termux</b>. It starts the fortress by itself.</li>
-        <li>Come back here. This screen disappears when it's awake.</li>
-      </ol>
+      <a id="wake-btn" class="wake-btn" href="intent://wake#Intent;scheme=fortress;package=com.fortress.launcher;end">WAKE THE FORTRESS</a>
+      <p class="muted small">That button needs the <b>Fortress launcher</b> app (SETUP → One-tap launcher). Without it: open <b>Termux</b>; it starts the fortress by itself, then come back. This screen disappears when it's awake.</p>
       <p class="asleep-wait">Waiting for it… <span id="asleep-s">0</span>s</p>
     </div>
   </section>
