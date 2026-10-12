@@ -10,7 +10,27 @@ export const DATA_DIR = path.join(BASE, 'data');
 export const WORKSPACES = path.join(BASE, 'workspaces');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 
+// Bump when the fortress should start from a clean slate once (the old state is backed up first).
+const GENERATION = 2;
+// What survives a fresh start: how the fortress is set up, not the work done in it.
+const KEEP = ['settings', 'connectors', 'repos', 'plan'];
+
+/** Back up everything, then return a state with only the setup kept. Files of old agents stay in workspaces/. */
+export function backupAndReset(loaded) {
+  const dir = path.join(DATA_DIR, 'backups', new Date().toISOString().replace(/[:.]/g, '-'));
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(loaded, null, 1));
+    for (const f of ['memory.json']) { const src = path.join(DATA_DIR, f); if (fs.existsSync(src)) fs.renameSync(src, path.join(dir, f)); }
+    for (const d of ['artifacts', 'uploads']) { const src = path.join(DATA_DIR, d); if (fs.existsSync(src)) fs.renameSync(src, path.join(dir, d)); }
+  } catch (e) { console.error('backup failed:', e.message); }
+  const fresh = { generation: GENERATION };
+  for (const k of KEEP) if (loaded[k] !== undefined) fresh[k] = loaded[k];
+  return { fresh, dir };
+}
+
 const DEFAULT_STATE = {
+  generation: GENERATION,
   settings: {
     model: '',                    // '' = Claude Code default
     lidiaModel: '',
@@ -58,9 +78,20 @@ class Store extends EventEmitter {
     fs.mkdirSync(WORKSPACES, { recursive: true });
     let loaded = {};
     try { loaded = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}
+    this.resetNote = null;
+    if (Object.keys(loaded).length && (loaded.generation || 1) < GENERATION) {
+      const { fresh, dir } = backupAndReset(loaded);
+      this.resetNote = { dir, agents: (loaded.sessions || []).length, rooms: (loaded.projects || []).length, ts: Date.now() };
+      loaded = fresh;
+    }
     this.state = { ...structuredClone(DEFAULT_STATE), ...loaded,
       settings: { ...DEFAULT_STATE.settings, ...(loaded.settings || {}) },
       spend: { ...DEFAULT_STATE.spend, ...(loaded.spend || {}) } };
+    if (this.resetNote) {
+      const n = this.resetNote;
+      this.state.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: `Clean slate, Jav. It's just me now. I saved your old fortress${n.agents ? ` (${n.agents} agent${n.agents === 1 ? '' : 's'}, ${n.rooms} room${n.rooms === 1 ? '' : 's'})` : ''} to ${path.relative(ROOT, n.dir)} in case you want anything back. Your settings, connected apps, repos and skills are untouched.\n\nTell me how you want your work to run and I'll set it up: the rooms, the agents, who does what. I'll show you what's happening as it happens.` });
+      this.changed();
+    }
     if (!this.state.settings.skillSources.includes('obra/superpowers')) this.state.settings.skillSources.push('obra/superpowers');
     // What was in flight when the server stopped. Nothing may stay red or busy with no reason on screen:
     // a request waiting on Jav died with the process, so the agent is marked "interrupted" (and resumed).
@@ -87,6 +118,7 @@ class Store extends EventEmitter {
   }
 
   flush() {
+    if (this.noFlush) return;   // fresh start in progress: the reset file on disk must win
     fs.writeFileSync(STATE_FILE + '.tmp', JSON.stringify(this.state, null, 2));
     fs.renameSync(STATE_FILE + '.tmp', STATE_FILE);
   }

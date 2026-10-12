@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { store, ROOT, id, SETTINGS_KEYS, checkSettings } from './store.js';
+import { store, ROOT, id, SETTINGS_KEYS, checkSettings, backupAndReset } from './store.js';
+import { z as z0 } from 'zod';
 import * as sessions from './sessions.js';
 import * as projects from './projects.js';
 import * as skills from './skills.js';
@@ -172,6 +173,17 @@ app.get('/api/export', (req, res) => {
   res.set('Content-Disposition', 'attachment; filename="fortress-export.json"').json({ exportedAt: new Date().toISOString(), state: { ...st, connectors: st.connectors.map(redact) },
     tasks: taskGraph.tasks(), bus: bus.log(), decisions: intent.decisions(), directives: intent.directives(), artifacts: artifacts.list(), memory: memory.stats() });
 });
+// Fresh start: back everything up, keep only setup (settings, connectors, repos, plan), restart with just Lidia.
+app.post('/api/fresh-start', wrap(async () => {
+  audit.record('jav', 'data.fresh-start', '', 'backed up, then reset to Lidia only');
+  for (const s of [...store.state.sessions]) { try { sessions.stop(s.id); } catch {} }
+  store.flush();
+  const { fresh, dir } = backupAndReset(JSON.parse(JSON.stringify(store.state)));
+  fs.writeFileSync(path.join(ROOT, 'data', 'state.json'), JSON.stringify(fresh));
+  store.noFlush = true;
+  system.restartSoon(75);
+  return { message: `Backed up to ${path.relative(ROOT, dir)}. Restarting with just Lidia…` };
+}, z0.object({ confirm: z0.literal('FRESH START') })));
 app.post('/api/erase', wrap(() => {
   audit.record('jav', 'data.erase', '', 'all agents, chat, memory, artifacts, tasks (audit chain kept, redacted)');
   for (const s of [...store.state.sessions]) sessions.remove(s.id);
