@@ -85,10 +85,21 @@ export function remove(sid) {
   store.changed();
 }
 
+export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
+const queries = new Map();   // session id -> live SDK query, for mid-turn mode changes
+const modeFor = (s) => s.permissionMode || store.state.settings.permissionMode || 'acceptEdits';
+
 export function update(sid, patch) {
   const s = store.session(sid);
   if (!s) return null;
   for (const k of ['name', 'goal', 'roomType', 'repoId', 'model', 'effort']) if (k in patch) s[k] = patch[k];
+  if ('permissionMode' in patch) {
+    const m = patch.permissionMode || '';
+    if (m && !PERMISSION_MODES.includes(m)) throw new Error(`unknown permission mode ${m}`);
+    s.permissionMode = m;
+    // Like shift+tab in Claude Code: a running turn switches right away.
+    queries.get(sid)?.setPermissionMode(modeFor(s)).catch(() => {});
+  }
   store.changed();
   return s;
 }
@@ -142,7 +153,8 @@ async function turn(s, text, from, saved = [], logged = false) {
       cwd: cwdFor(s),
       resume: s.sdkSessionId,
       model: s.model || store.state.settings.model,
-      permissionMode: store.state.settings.permissionMode,
+      permissionMode: modeFor(s),
+      onQuery: (q) => queries.set(s.id, q),
       mcpServers: { ...mcpServersFor(), fortress: agentScheduleServer(s.id) },
       appendSystem: ownerBrief(s),
       hooks: moneyHooks((tool, input, reason) => holdMoney(s, tool, input, reason)),
@@ -161,6 +173,7 @@ async function turn(s, text, from, saved = [], logged = false) {
     out = { result: `Error: ${err.message}`, isError: true, costUsd: 0 };
   } finally {
     running.delete(s.id);
+    queries.delete(s.id);
   }
   if (out.sessionId) s.sdkSessionId = out.sessionId;
   s.costUsd += out.costUsd || 0;
@@ -334,7 +347,8 @@ ${r.fixes.map((f, i) => `${i + 1}. ${f}`).join('\n')}${r.praise ? `\nWorking wel
 function askPermission(s, toolName, input, kind = 'tool', reason = '') {
   const pid = id('perm');
   return new Promise((resolve) => {
-    const shown = kind === 'money' ? JSON.stringify(input ?? {}, null, 1).slice(0, 900) : summarizeInput(input);
+    const shown = kind === 'money' ? JSON.stringify(input ?? {}, null, 1).slice(0, 900)
+      : toolName === 'ExitPlanMode' ? String(input?.plan || '').slice(0, 4000) : summarizeInput(input);
     s.pendingPermission = { id: pid, tool: toolName, input: shown, kind, reason };
     const prev = s.status;
     setStatus(s, 'needs_jav', kind === 'money' ? 'waiting for Jav: money' : `asking to use ${toolName}`);
@@ -361,6 +375,11 @@ export function answerPermission(sid, pid, allow) {
   permissionWaiters.delete(pid);
   const s = store.session(sid);
   if (s) log(s, 'jav', allow ? `Allowed ${s.pendingPermission?.tool}.` : `Denied ${s.pendingPermission?.tool}.`);
+  // Approving a plan leaves plan mode, as in Claude Code; otherwise the agent would only ever plan.
+  if (s && allow && s.pendingPermission?.tool === 'ExitPlanMode' && modeFor(s) === 'plan') {
+    s.permissionMode = 'acceptEdits';
+    queries.get(sid)?.setPermissionMode('acceptEdits').catch(() => {});
+  }
   fn(allow);
   return true;
 }

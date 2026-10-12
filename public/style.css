@@ -362,3 +362,4 @@ code.inline { background: #1c1b1f; padding: 0 4px; color: #ffd27a; font-size: 0.
 
 .ico-cam, .ico-clip { width: 22px; height: 22px; }
 .msg .who { flex-wrap: wrap; }
+.plan-text { max-height: 40vh; overflow-y: auto; background: #0e0d10; border: 2px solid var(--line); padding: 8px; margin: 6px 0; font-size: 15px; }

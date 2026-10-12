@@ -244,6 +244,11 @@ const MODEL_OPTS = [['', 'Fortress default'], ['opus', 'Opus (latest)'], ['sonne
   ['claude-opus-5-5', 'Opus 5.5'], ['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-haiku-5-5', 'Haiku 5.5'], ['claude-fable-5-1', 'Fable 5.1']];
 const STATUS_LABEL = { idle: 'Idle', working: 'Working', reporting: 'Reporting to Lidia', needs_jav: 'Needs you', done: 'Done', error: 'Error' };
 
+// Same modes as shift+tab in Claude Code. '' follows the fortress default in SETUP.
+const PERMS = [['', 'Fortress default'], ['default', 'Ask me'], ['acceptEdits', 'Accept edits'], ['auto', 'Auto'], ['plan', 'Plan only'], ['bypassPermissions', 'Bypass']];
+const PERM_HELP = { '': 'Uses the mode set in SETUP.', default: 'Asks you before edits, commands and anything risky.', acceptEdits: 'Edits files freely, asks before commands.',
+  auto: 'A safety classifier approves routine actions and asks you about risky ones.', plan: 'Reads and plans only. Shows you the plan and changes nothing until you approve it.',
+  bypassPermissions: 'Never asks. Runs any command without checking. The money gate still blocks payments.' };
 const EFFORTS = [['', 'Default'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']];
 // Which log entries belong in the chat with Jav, and which are behind-the-scenes work.
 const CHAT_ROLES = new Set(['jav', 'claude', 'schedule']);
@@ -311,6 +316,8 @@ function toggleAgentMenu() {
     <h4>Model</h4>${chips('model', MODEL_OPTS, s.model)}
     <h4>Effort</h4>${chips('effort', EFFORTS, s.effort)}
     <p class="muted small">Higher effort thinks longer and uses more of your plan. Takes effect on the next message.</p>
+    <h4>Permissions</h4>${chips('permissionMode', PERMS, s.permissionMode)}
+    <p class="muted small" id="am-perm-help">${esc(PERM_HELP[s.permissionMode || ''])} Changes apply right away, even mid-turn.</p>
     <h4>Room</h4>${chips('roomType', [['workshop', 'Workshop'], ['library', 'Archive'], ['server', 'Reactor'], ['lab', 'Bio lab']], s.roomType)}
     <label>Name <input id="am-name" value="${esc(s.name)}"></label>
     <label>Repository <select id="am-repo"><option value="">(own workspace)</option>${state.repos.map(r => `<option value="${r.id}" ${r.id === s.repoId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
@@ -319,6 +326,10 @@ function toggleAgentMenu() {
   const m = $('#agent-menu');
   m.querySelectorAll('.opt-chips').forEach(g => g.onclick = (e) => {
     const b = e.target.closest('[data-v]'); if (!b) return;
+    if (g.dataset.opt === 'permissionMode') {
+      if (b.dataset.v === 'bypassPermissions' && !confirm(`Let ${s.name} run any command without asking? Payments stay blocked by the money gate.`)) return;
+      $('#am-perm-help').textContent = `${PERM_HELP[b.dataset.v]} Changes apply right away, even mid-turn.`;
+    }
     g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     api('PATCH', `/api/sessions/${s.id}`, { [g.dataset.opt]: b.dataset.v }).then(() => toast(`${s.name}: ${b.textContent}`));
   });
@@ -335,7 +346,7 @@ function refreshSession() {
   $('#panel-title').textContent = s.name;
   const modelName = (MODEL_OPTS.find(([v]) => v === (s.model || ''))?.[1] || s.model);
   $('#s-head').innerHTML = `<div class="chips"><span class="chip st-${esc(s.status)}">${STATUS_LABEL[s.status] || esc(s.status)}</span>
-    <span class="chip">${esc(modelName)}${s.effort ? ` · ${esc(s.effort)}` : ''}</span><span class="chip">${esc(s.activity || '')}</span>${s.lastReview ? `<span class="chip st-${s.lastReview.score >= 8 ? 'done' : s.lastReview.score >= 5 ? 'working' : 'needs_jav'}">${esc(s.lastReview.score)}/10</span>` : ''}</div>`;
+    <span class="chip">${esc(modelName)}${s.effort ? ` · ${esc(s.effort)}` : ''}</span>${s.permissionMode ? `<span class="chip ${s.permissionMode === 'bypassPermissions' ? 'st-needs_jav' : ''}">${esc(PERMS.find(([v]) => v === s.permissionMode)?.[1] || s.permissionMode)}</span>` : ''}<span class="chip">${esc(s.activity || '')}</span>${s.lastReview ? `<span class="chip st-${s.lastReview.score >= 8 ? 'done' : s.lastReview.score >= 5 ? 'working' : 'needs_jav'}">${esc(s.lastReview.score)}/10</span>` : ''}</div>`;
   let alert = '';
   if (s.pendingPermission?.kind === 'money') {
     alert = `<div class="alert money"><b>MONEY: only you can approve this</b>
@@ -343,6 +354,10 @@ function refreshSession() {
       <pre>${esc(s.pendingPermission.input)}</pre>
       <p class="muted small">Nothing has been spent. Lidia and the other agents can't approve this; it waits for you.</p>
       <div class="row"><button class="danger" data-allow="0">DENY</button><button class="primary" data-allow="1">APPROVE</button></div></div>`;
+  } else if (s.pendingPermission?.tool === 'ExitPlanMode') {
+    alert = `<div class="alert"><b>${esc(s.name)}'s plan</b><div class="plan-text">${rich(s.pendingPermission.input)}</div>
+      <p class="muted small">Approve and it starts building with Accept edits on. Keep planning and it revises.</p>
+      <div class="row"><button class="primary" data-allow="1">APPROVE PLAN</button><button class="danger" data-allow="0">KEEP PLANNING</button></div></div>`;
   } else if (s.pendingPermission) {
     alert = `<div class="alert"><b>${esc(s.name)} asks permission</b> to use <code>${esc(s.pendingPermission.tool)}</code>
       <pre>${esc(s.pendingPermission.input)}</pre>

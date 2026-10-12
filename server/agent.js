@@ -31,7 +31,7 @@ const CLAUDE_PATH = process.env.FORTRESS_CLAUDE_PATH ? { pathToClaudeCodeExecuta
 export async function runTurn(opts) {
   if (MOCK) return mockTurn(opts);
   const { prompt, cwd, resume, model, permissionMode, mcpServers, appendSystem,
-          onInit, onText, onTool, canUseTool, abortController, hooks, effort } = opts;
+          onInit, onText, onTool, canUseTool, abortController, hooks, effort, onQuery } = opts;
   const q = query({
     prompt: asInput(prompt),
     options: {
@@ -40,6 +40,8 @@ export async function runTurn(opts) {
       model: model || undefined,
       effort: effort || undefined,
       permissionMode,
+      // Needed so the mode can be switched to bypass, now or mid-turn. The money gate is a hook and still runs.
+      allowDangerouslySkipPermissions: true,
       mcpServers,
       settingSources: ['user', 'project', 'local'], // loads skills, CLAUDE.md, settings
       systemPrompt: { type: 'preset', preset: 'claude_code', append: appendSystem },
@@ -49,6 +51,7 @@ export async function runTurn(opts) {
       ...CLAUDE_PATH,
     },
   });
+  onQuery?.(q);
   let out = { result: '', isError: false, costUsd: 0, sessionId: resume };
   for await (const m of q) {
     noteRateLimit(m);
