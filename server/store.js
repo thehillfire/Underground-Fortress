@@ -4,8 +4,10 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-export const DATA_DIR = path.join(ROOT, 'data');
-export const WORKSPACES = path.join(ROOT, 'workspaces');
+// FORTRESS_DATA lets tests (and helpers) run against a throwaway directory.
+const BASE = process.env.FORTRESS_DATA ? path.resolve(process.env.FORTRESS_DATA) : ROOT;
+export const DATA_DIR = path.join(BASE, 'data');
+export const WORKSPACES = path.join(BASE, 'workspaces');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 
 const DEFAULT_STATE = {
@@ -25,6 +27,10 @@ const DEFAULT_STATE = {
     lidiaVerify: true,            // Lidia checks that "done" is real before standing an agent down
     chatStyle: 'modern',          // texting look: modern | retro
     chatColor: '#b0222a',         // texting color (hex)
+    worldTheme: 'fortress',       // fortress | spaceship | westernTown | pirateCove | cyberpunk (one save state, art differs)
+    reduceMotion: false,
+    colorblind: 'none',           // none | protanopia | deuteranopia | tritanopia
+    soundOn: false,
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
   projects: [],      // rooms; each holds any number of agents
@@ -125,13 +131,17 @@ class Store extends EventEmitter {
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
 // Settings Jav (and Lidia, on his behalf) may change.
-export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort', 'chatStyle', 'chatColor', 'resumeOnRestart', 'lidiaVerify'];
+export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort', 'chatStyle', 'chatColor', 'resumeOnRestart', 'lidiaVerify', 'worldTheme', 'reduceMotion', 'colorblind', 'soundOn'];
+export const WORLD_THEMES = ['fortress', 'spaceship', 'westernTown', 'pirateCove', 'cyberpunk'];
 
 /** Validate a settings change; returns an error message or null. */
 export function checkSettings(c) {
   if ('permissionMode' in c && !PERMISSION_MODES.includes(c.permissionMode)) return `permissionMode must be one of ${PERMISSION_MODES.join(', ')}`;
   if ('chatStyle' in c && !['modern', 'retro'].includes(c.chatStyle)) return 'chatStyle must be modern or retro';
   if ('chatColor' in c && !/^#[0-9a-f]{6}$/i.test(c.chatColor)) return 'chatColor must be a hex color like #2f7de0';
+  if ('worldTheme' in c && !WORLD_THEMES.includes(c.worldTheme)) return `worldTheme must be one of ${WORLD_THEMES.join(', ')}`;
+  if ('colorblind' in c && !['none', 'protanopia', 'deuteranopia', 'tritanopia'].includes(c.colorblind)) return 'colorblind must be none, protanopia, deuteranopia or tritanopia';
+  for (const k of ['reduceMotion', 'soundOn']) if (k in c && typeof c[k] !== 'boolean') return `${k} must be true or false`;
   return null;
 }
 

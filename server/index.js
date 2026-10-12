@@ -19,6 +19,8 @@ import { startScheduler, removeJob, addJob } from './schedule.js';
 import * as system from './system.js';
 import { resolveUpload } from './files.js';
 import { javReacts } from './reactions.js';
+import * as intent from './intent.js';
+import * as prio from './priority.js';
 
 // One agent or request throwing must not take the whole fortress down (it used to: the phone then
 // showed "failed to fetch" until Termux was reopened). Log it, keep running.
@@ -94,6 +96,14 @@ app.post('/api/sessions/:id/permission', wrap((r) =>
 app.post('/api/lidia', wrap((r) => sessions.talkToLidia(String(r.body.text || ''), r.body.files || [])));
 app.post('/api/react', wrap((r) => { javReacts(String(r.body.owner), r.body.ts, r.body.emoji || ''); }));
 app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.text || ''); store.changed(); }));
+
+// Lidia's autonomy: intent model, standing directives, thought stream, priorities, escalations
+app.get('/api/intent', wrap(() => ({ model: intent.intentModel(), directives: intent.directives(), digest: intent.digest(Date.now() - 864e5) })));
+app.post('/api/directives', wrap((r) => intent.addDirective(r.body.text, 'jav')));
+app.delete('/api/directives/:id', wrap((r) => ({ removed: intent.removeDirective(r.params.id) })));
+app.get('/api/decisions', wrap((r) => prio.thoughtStream({ q: r.query.q, tier: r.query.tier ?? null, agentId: r.query.agent, since: Number(r.query.since) || 0, limit: Math.min(500, Number(r.query.limit) || 200) })));
+app.get('/api/priorities', wrap(() => prio.priorities()));
+app.get('/api/escalations', wrap(() => prio.escalations()));
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
@@ -184,6 +194,7 @@ sessions.events.on('notify', ({ text, sessionId }) => {
   broadcast({ type: 'notify', title: 'Lidia', text: body, sessionId });
   if (!wss.clients.size) { try { system.termuxAction('notify', body); } catch {} }
 });
+intent.intentEvents.on('decision', (e) => broadcast({ type: 'decision', decision: e }));
 for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end', 'lidia-live', 'lidia-reviewing']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
 
 await ensureAssets();

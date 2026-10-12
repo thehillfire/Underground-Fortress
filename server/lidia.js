@@ -16,6 +16,7 @@ import * as projects from './projects.js';
 import { reactTool, takeNotes, MEANING } from './reactions.js';
 import * as skills from './skills.js';
 import { captainScheduleTools, tz } from './schedule.js';
+import { intentBrief, enforceTier, addDirective, removeDirective, directives, record as recordDecision } from './intent.js';
 
 export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'];
 
@@ -44,7 +45,7 @@ function briefing() {
   const precedents = st.precedents.slice(-15)
     .map(p => `- Q: ${p.question}\n  Jav: ${p.answer}`).join('\n') || '(none yet)';
   const prefs = (st.preferences || []).slice(-30).map(p => `- ${p.text}`).join('\n') || '(none yet)';
-  return `STANDING ORDERS FROM JAV:\n${st.standingOrders}\n\nTHINGS YOU HAVE LEARNED ABOUT HOW JAV LIKES THINGS DONE:\n${prefs}\n\nPAST ANSWERS FROM JAV (precedents):\n${precedents}\n\nJAV'S RECENT WORDS AND REACTIONS (his style and priorities; follow the trend when you decide):\n${javWords()}`;
+  return `STANDING ORDERS FROM JAV:\n${st.standingOrders}\n\nTHINGS YOU HAVE LEARNED ABOUT HOW JAV LIKES THINGS DONE:\n${prefs}\n\nPAST ANSWERS FROM JAV (precedents):\n${precedents}\n\nJAV'S RECENT WORDS AND REACTIONS (his style and priorities; follow the trend when you decide):\n${javWords()}\n\n${intentBrief()}`;
 }
 function transcript(s, n = 14) {
   return s.log.slice(-n).map(e => `[${e.role}${e.tool ? ':' + e.tool : ''}] ${String(e.text).slice(0, 600)}`).join('\n');
@@ -209,6 +210,12 @@ const TOOLS = [
       store.changed();
       return ok(`Forgot ${before - store.state.preferences.length} preference(s).`);
     }),
+  tool('add_directive', "Record a standing directive: a blanket permission or rule from Jav ('you can always download free assets', 'never email anyone without asking'). You then follow it without asking again. Directives can NEVER authorize spending money; those are refused.",
+    { text: z.string() },
+    async ({ text }) => { try { const d = addDirective(text, 'jav'); return ok(`Standing directive saved: ${d.text}`); } catch (e) { return fail(e.message); } }),
+  tool('remove_directive', 'Remove a standing directive (match any part of its text).', { match: z.string() },
+    async ({ match }) => ok(`Removed ${removeDirective(match)} directive(s).`)),
+  tool('list_directives', 'Jav\'s standing directives.', {}, async () => ok(directives().map(d => d.text).join('\n') || '(none)')),
   tool('set_standing_orders', 'Replace the standing orders you use to judge reports. Only when Jav changes policy.', { text: z.string() },
     async ({ text }) => { store.state.standingOrders = text; store.changed(); return ok('Standing orders updated.'); }),
 ];
@@ -251,6 +258,8 @@ Reply with ONLY a JSON object:
  "agent_asked":"<the question it put to you, or empty>",
  "evidence":"<what shows the work is real, or what is missing>",
  "reasoning":"<your thinking, 2-4 sentences: what you saw, what Jav would want, why this decision>",
+ "tier":<0-3: authority this decision needs. 0 just do it, 1 do it and report, 2 ask Jav, 3 Jav only (money, credentials, irreversible)>,
+ "default_answer":"<what you would answer the agent if you had to pick right now; always fill it>",
  "decision":"continue|done|escalate",
  "instruction":"<for continue: your direct reply or next instruction to the agent. If it asked a question, answer it first>",
  "delegate":[{"agent":"<a name from the list above>","instruction":"<what that agent should do, with the context from this agent's work>"}],
@@ -276,7 +285,9 @@ Rules:
     d.decision = 'escalate';
     d.message_to_jav ||= `${s.name} reported and I couldn't work out its next step from your orders. Its last message: "${String(result).replace(/\s+/g, ' ').slice(0, 240)}". Where should it go from here?`;
   }
+  enforceTier(d, s, result);   // "Don't bother me": escalation survives only at tier 2+
   if (d.decision === 'done') await verifyDone(s, d, result);
+  recordDecision({ tier: d.tier ?? 1, kind: 'review', agentId: s.id, agent: s.name, summary: d.agent_asked || d.note || `${s.name} reported`, decision: d.decision, why: d.reasoning || '' });
   return d;
 }
 

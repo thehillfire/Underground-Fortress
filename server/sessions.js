@@ -14,6 +14,8 @@ import { reactTool, takeNotes, setReaction } from './reactions.js';
 import { project, projectDir, members, findProject, createProject, pruneEmpty, migrate } from './projects.js';
 import * as lidia from './lidia.js';
 import { mcpServersFor } from './connectors.js';
+import { triagePermission } from './intent.js';
+import { handleCrash, resolved, cancel as cancelIncident } from './incidents.js';
 
 export const events = new EventEmitter(); // bubbles/animations for the browser
 
@@ -36,6 +38,7 @@ const orphanAsk = (s) => {
 
 function setStatus(s, status, activity = s.activity) {
   if (status === 'needs_jav' && !String(s.pendingQuestion || '').trim() && !s.pendingPermission) s.pendingQuestion = orphanAsk(s);
+  if (s.status !== status) s.statusSince = Date.now();
   s.status = status;
   s.activity = activity;
   store.changed();
@@ -202,7 +205,18 @@ export function update(sid, patch) {
   return s;
 }
 
+/** Lidia texts Jav about something only he can fix. level: INFO | WARN | BLOCK | CRITICAL. */
+function escalateToJav(s, text, level = 'BLOCK') {
+  s.escalation = { level, text, ts: Date.now() };
+  store.state.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: `${s.name}: ${text}`, about: s.id });
+  store.feed(`${level}: ${s.name}: ${text}`, 'alert', s.id);
+  events.emit('alert', { sessionId: s.id, text });
+  events.emit('notify', { text: `${s.name}: ${text}`, sessionId: s.id });
+  store.changed();
+}
+
 export function stop(sid) {
+  cancelIncident(sid);
   running.get(sid)?.abort();
   const s = store.session(sid);
   if (s?.pendingPermission) answerPermission(sid, s.pendingPermission.id, false);
@@ -260,6 +274,7 @@ export async function confirmAlive(sid, since, ms = 20000) {
 async function turn(s, text, from, saved = [], logged = false) {
   if (from === 'jav-via-lidia') from = 'lidia';
   delete s.interrupted;
+  delete s.escalation;
   if (logged) { const q = [...s.log].reverse().find(e => e.queued); if (q) delete q.queued; }
   else log(s, from, text || '', saved.length ? { files: fileMeta(saved) } : {});
   setStatus(s, 'working', 'thinking');
@@ -295,6 +310,11 @@ async function turn(s, text, from, saved = [], logged = false) {
         if (modeFor(s) === 'bypassPermissions' && toolName !== 'ExitPlanMode') return Promise.resolve({ behavior: 'allow', updatedInput: input });
         if (toolName.startsWith('mcp__') && store.state.settings.autoApproveConnectors !== false)
           return Promise.resolve({ behavior: 'allow', updatedInput: input });   // connectors Jav set up are trusted
+        // Lidia triages: tier 0-1 she approves herself (tier 1 lands in her digest); tier 2-3 goes to Jav.
+        if (toolName !== 'ExitPlanMode' && modeFor(s) !== 'plan') {
+          const t = triagePermission(s, toolName, input, [cwdFor(s), ...projectExtraDirs(s)].map(d => path.resolve(d)));
+          if (t.handled) return Promise.resolve({ behavior: 'allow', updatedInput: input });
+        }
         return askPermission(s, toolName, input);
       },
     });
@@ -322,9 +342,12 @@ async function turn(s, text, from, saved = [], logged = false) {
     store.feed(`${s.name} crashed: ${reason}`, 'alert', s.id);
     setStatus(s, 'error', 'crashed');
     events.emit('alert', { sessionId: s.id, text: `Crashed: ${reason}` });
+    // Lidia tries to fix it herself first (wait out a limit, drop a bad model, retry); Jav only hears if that fails.
+    if (store.state.settings.lidiaAutopilot !== false) handleCrash(s, reason, { retry, setModel: (x, m) => { x.model = m; }, escalate: escalateToJav });
     return;   // a message from Jav retries; queued messages wait for that
   }
   delete s.crash;
+  resolved(s);
   if (out.isError) log(s, 'system', out.result, { error: true });
 
   // Jav's queued words outrank Lidia's review.
@@ -444,6 +467,7 @@ async function report(s, result, isError) {
     // Lidia can't decide: she tells Jav, in her own words, what happened and what she'd do.
     const ask = String(d.message_to_jav || d.question || '').trim() || orphanAsk(s);
     s.pendingQuestion = ask;
+    s.escalation = { level: (d.tier ?? 2) >= 3 ? 'CRITICAL' : 'BLOCK', text: ask, ts: Date.now() };
     log(s, 'lidia', `I need Jav on this: ${ask}`);
     st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: `${s.name} needs a call from you.\n\n${ask}`, about: s.id });
     store.feed(`${s.name} needs Jav: ${ask}`, 'alert', s.id);
