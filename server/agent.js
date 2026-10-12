@@ -174,10 +174,11 @@ const MOCK_TOOLS = [
   ['WebSearch', { query: 'best practices' }], ['Write', { file_path: 'notes.md' }],
 ];
 
-async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, abortController, hooks }) {
+async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, abortController, hooks, onMockReact }) {
   const sessionId = resume || `mock-${Math.random().toString(36).slice(2, 10)}`;
   onInit?.({ session_id: sessionId });
   await sleep(800);
+  onMockReact?.();
   const said = promptText(prompt);
   const pics = Array.isArray(prompt) ? prompt.filter(b => b.type === 'image').length : 0;
   onText?.(pics ? `Got your ${pics} image${pics > 1 ? 's' : ''}. On it: "${said.slice(0, 60)}"` : `On it: "${said.slice(0, 80)}"`);
@@ -225,6 +226,7 @@ async function mockCaptain({ prompt, onTool }) {
   };
   const text = String(prompt).split('Jav says:').pop().trim();
   const lower = text.toLowerCase();
+  await call('react', { emoji: /thank|love/.test(lower) ? '❤️' : /fail|crash|broke|dead/.test(lower) ? '💀' : /\?/.test(text) ? '👍' : '👀' });
   let reply;
   const m = /(?:create|open|make|add)\b.*?(?:agent|room|survivor)\s*(?:called|named)?\s*([A-Z][\w-]*)?/i.exec(text);
   if (m && /create|open|make|add/i.test(lower)) {

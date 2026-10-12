@@ -92,8 +92,9 @@ const fail = (m) => ({ content: [{ type: 'text', text: m }], isError: true });
 const DAYS_DOC = '"daily", "weekdays", "weekends", or a list like "mon,wed,fri"';
 
 /** Tools an agent gets for its own schedule. */
-export function agentScheduleServer(sessionId) {
+export function agentScheduleServer(sessionId, extraTools = []) {
   return createSdkMcpServer({ name: 'fortress', version: '1.0.0', tools: [
+    ...extraTools,
     tool('schedule_task', `Have the fortress wake you up at a time of day in Jav's timezone (${tz()}) with an instruction. Use this instead of cron, at, or any OS scheduler (there is none on this device). days: ${DAYS_DOC}.`,
       { time: z.string().describe('e.g. 07:00 or 7am'), days: z.string().optional(), instruction: z.string(), once: z.boolean().optional() },
       async (a) => { try { const j = addJob({ sessionId, ...a, by: 'agent' }); return ok(`Scheduled ${describe(j)} [id ${j.id}]`); } catch (e) { return fail(e.message); } }),

@@ -80,7 +80,9 @@ function openLidia(start) {
   document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'lidia'));
   talk.openTalk(start);
 }
-function openSession(id) { open('session', id); markSeen(id); game.flyTo(id, sheetInset()); }
+// Tapping an agent opens the texts; ⓘ in the chat opens the details panel.
+function openSession(id) { close(); talk.openChat(id); markSeen(id); game.flyTo(id); }
+function openDetails(id) { if (talk.isOpen()) talk.closeTalk(); open('session', id); markSeen(id); game.flyTo(id, sheetInset()); }
 const sheetInset = () => (innerWidth < 900 ? panel.offsetHeight : 0);
 
 $('#panel-close').onclick = close;
@@ -127,7 +129,7 @@ function refresh() {
   talk.update(state);
   renderChats();
   if (tab === 'session' && selected) markSeen(selected);
-  if (talk.isOpen()) markSeen('lidia');
+  if (talk.currentPeer()) markSeen(talk.currentPeer());
   renderTopbar();
   renderFeed();
   if (!tab) return;
@@ -236,7 +238,7 @@ $('#chats-list').onclick = (e) => {
   if (!id) return;
   toggleChats(false);
   if (talk.isOpen()) talk.closeTalk();
-  if (id === 'lidia') { close(); game.flyTo('lidia'); openLidia('chat'); }
+  if (id === 'lidia') { close(); game.flyTo('lidia'); talk.openChat('lidia'); markSeen('lidia'); }
   else openSession(id);
 };
 document.addEventListener('pointerdown', (e) => { if (!$('#chats').hidden && !e.target.closest('#chats, #chats-btn')) toggleChats(false); });
@@ -255,42 +257,20 @@ const EFFORTS = [['', 'Default'], ['low', 'Low'], ['medium', 'Medium'], ['high',
 // Which log entries belong in the chat with Jav, and which are behind-the-scenes work.
 const CHAT_ROLES = new Set(['jav', 'claude', 'schedule']);
 let sessionTab = 'chat';
-let sessionAttach = null;
 
 function mountSession() {
-  sessionTab = 'chat';
+  // Details for an agent: the texting lives in its chat; this is the mission, the work log and settings.
+  sessionTab = 'mission';
   body.innerHTML = `
     <div id="s-head"></div>
     <div id="s-alert"></div>
     <div class="seg s-tabs" id="s-tabs">
-      <button data-st="chat" class="active">CHAT</button><button data-st="work">WORK <em id="s-work-n"></em></button><button data-st="mission">MISSION</button>
+      <button data-st="mission" class="active">MISSION</button><button data-st="work">WORK <em id="s-work-n"></em></button>
     </div>
-    <div id="s-log" class="log"></div>
-    <div id="s-mission" hidden></div>
-    <div id="s-tray" class="att-tray" hidden></div>
-    <form id="s-form" class="composer">
-      <button type="button" class="att-btn" id="s-cam" title="Camera"><span class="ico-cam"></span></button>
-      <button type="button" class="att-btn" id="s-files" title="Photos and files"><span class="ico-clip"></span></button>
-      <textarea id="s-input" rows="1" placeholder="Message this survivor…"></textarea>
-      <button type="button" class="mic-inline" title="Speak"><span class="mic-ico"></span></button>
-      <button type="submit" class="primary">SEND</button>
-    </form>`;
-  const form = $('#s-form'), input = $('#s-input');
-  sessionAttach = makeAttach({ tray: $('#s-tray'), cameraBtn: $('#s-cam'), filesBtn: $('#s-files') });
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const t = input.value.trim();
-    if (!t && !sessionAttach.count()) return;
-    const btn = form.querySelector('[type=submit]'); btn.disabled = true;
-    try {
-      const files = await sessionAttach.take();
-      input.value = '';
-      await api('POST', `/api/sessions/${selected}/message`, { text: t, files });
-      setSessionTab('chat');
-    } catch (err) { toast(err.message); } finally { btn.disabled = false; }
-  };
-  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); form.requestSubmit(); } };
-  $('.mic-inline', form).onclick = () => startMic();
+    <div id="s-log" class="log" hidden></div>
+    <div id="s-mission"></div>
+    <button class="primary" id="s-text">TEXT THIS AGENT</button>`;
+  $('#s-text').onclick = () => openSession(selected);
   $('#s-tabs').onclick = (e) => { const b = e.target.closest('[data-st]'); if (b) setSessionTab(b.dataset.st); };
   // ⋮ menu lives in the panel header while an agent is open
   $('#panel-menu')?.remove();
@@ -395,8 +375,7 @@ function refreshSession() {
   const work = s.log.filter(e => !CHAT_ROLES.has(e.role));
   $('#s-work-n').textContent = work.length ? work.length : '';
   if (sessionTab === 'mission') return renderMission(s);
-  renderLog($('#s-log'), sessionTab === 'work' ? work : s.log.filter(e => CHAT_ROLES.has(e.role)), s.id,
-    sessionTab === 'work' ? 'Behind the scenes: Lidia\'s instructions, peer reviews and tool use show up here.' : 'No messages yet. Say hi, send a photo, or give this survivor a job.');
+  renderLog($('#s-log'), work, s.id, 'Behind the scenes: Lidia\'s instructions, peer reviews and tool use show up here.');
 }
 
 function renderMission(s) {
@@ -784,18 +763,19 @@ function mountSettings() {
 const micBtn = $('#mic');
 function startMic() {
   if (voice.isListening()) { voice.stop(); return; }
-  const target = talk.isOpen() ? 'Lidia' : (state?.sessions.find(s => s.id === selected)?.name || 'Lidia');
+  const here = talk.currentPeer() || selected;
+  const target = here && here !== 'lidia' ? (state?.sessions.find(s => s.id === here)?.name || 'Lidia') : 'Lidia';
   voiceBar.open(target);
   voice.listen({
     onStart: () => voiceBar.live(),
     onSound: (l) => voiceBar.level(l),
     onInterim: (t) => voiceBar.text(t),
     onResult: async (t) => {
-      const r = voice.route(t, state.sessions, talk.isOpen() ? 'lidia' : selected);
+      const r = voice.route(t, state.sessions, talk.currentPeer() || selected || 'lidia');
       const name = r.to === 'lidia' ? 'Lidia' : state.sessions.find(s => s.id === r.to)?.name;
       voiceBar.sent(name, r.text);
-      if (r.to === 'lidia') { if (!talk.isOpen()) openLidia('chat'); await talk.send(r.text); }
-      else { if (selected !== r.to) openSession(r.to); await api('POST', `/api/sessions/${r.to}/message`, { text: r.text }); }
+      if (talk.currentPeer() !== r.to) { if (r.to === 'lidia') talk.openChat('lidia'); else openSession(r.to); }
+      await talk.send(r.text);
     },
     onEnd: () => voiceBar.ended(),
     onError: (m) => voiceBar.error(m),
@@ -972,7 +952,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 game.initGame($('#world'), {
   onPick: (hit) => {
     if (hit.kind === 'lidia') openLidia();
-    else if (hit.kind === 'session') open('session', hit.id);
+    else if (hit.kind === 'session') openSession(hit.id);
     else if (hit.kind === 'project') openProject(hit.id);
     else if (hit.kind === 'dig') open('new');
     else if (hit.kind === 'tab') open(hit.tab);
@@ -986,6 +966,9 @@ bindCopy();
 talk.initTalk({
   api, getState: () => state,
   openSession: (id) => openSession(id),
+  openDetails: (id) => openDetails(id),
+  onSeen: (id) => markSeen(id),
+  toast: (t) => toast(t),
   openOrders: () => open('lidia'),
   startMic: () => startMic(),
   onClose: () => { game.select(selected); document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (tab && !['session', 'new'].includes(tab) ? (['repos','connectors','skills'].includes(tab) ? 'connectors' : tab) : 'base'))); },

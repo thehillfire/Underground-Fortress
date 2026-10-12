@@ -70,19 +70,25 @@
     </div>
     <div class="talk-chat" id="talk-chat" hidden>
       <header>
-        <button class="back" data-c="back" aria-label="Back">&lt;</button>
+        <button class="back" id="chat-back" aria-label="Back to the bunker">&lsaquo;</button>
         <canvas id="talk-avatar" width="40" height="40"></canvas>
-        <div><b>Lidia</b><small id="talk-status">on the bridge</small></div>
-        <button class="small" data-c="leave">CLOSE</button>
+        <div class="who"><b id="chat-name">Lidia</b><small id="talk-status">on the bridge</small></div>
+        <button class="info" id="chat-info" aria-label="Details">i</button>
       </header>
       <div class="bubbles" id="talk-bubbles"></div>
+      <div id="react-bar" class="react-bar" hidden></div>
       <div id="talk-tray" class="att-tray" hidden></div>
+      <div class="chat-nav">
+        <button id="chat-prev" aria-label="Previous chat that needs you">&lsaquo;</button>
+        <span id="chat-nav-label"></span>
+        <button id="chat-next" aria-label="Next chat that needs you">&rsaquo;</button>
+      </div>
       <form class="composer" id="talk-form">
         <button type="button" class="att-btn" id="talk-cam" title="Camera"><span class="ico-cam"></span></button>
         <button type="button" class="att-btn" id="talk-files" title="Photos and files"><span class="ico-clip"></span></button>
         <textarea id="talk-input" rows="1" placeholder="Text Lidia…"></textarea>
         <button type="button" class="mic-inline" id="talk-mic"><span class="mic-ico"></span></button>
-        <button type="submit" class="primary">SEND</button>
+        <button type="submit" class="send" aria-label="Send">&#10148;</button>
       </form>
     </div>
   </section>

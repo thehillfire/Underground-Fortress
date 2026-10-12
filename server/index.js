@@ -18,6 +18,7 @@ import { refreshUsage, startUsagePolling } from './usage.js';
 import { startScheduler, removeJob, addJob } from './schedule.js';
 import * as system from './system.js';
 import { resolveUpload } from './files.js';
+import { javReacts } from './reactions.js';
 
 const PORT = Number(process.env.PORT || 4321);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -75,6 +76,7 @@ app.post('/api/sessions/:id/permission', wrap((r) =>
 
 // Lidia
 app.post('/api/lidia', wrap((r) => sessions.talkToLidia(String(r.body.text || ''), r.body.files || [])));
+app.post('/api/react', wrap((r) => { javReacts(String(r.body.owner), r.body.ts, r.body.emoji || ''); }));
 app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.text || ''); store.changed(); }));
 
 // Settings

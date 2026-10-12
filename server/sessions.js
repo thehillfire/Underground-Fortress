@@ -10,6 +10,7 @@ import { peakUsage, refreshSoon } from './usage.js';
 import { agentScheduleServer, tz } from './schedule.js';
 import { saveUploads, promptWithFiles, fileMeta } from './files.js';
 import { DATA_DIR } from './store.js';
+import { reactTool, takeNotes, setReaction } from './reactions.js';
 import { project, projectDir, members, findProject, createProject, pruneEmpty, migrate } from './projects.js';
 import * as lidia from './lidia.js';
 import { mcpServersFor } from './connectors.js';
@@ -104,7 +105,11 @@ export function create({ name, goal = '', projectId, project: projectName, roomT
   };
   st.sessions.push(s);
   store.feed(`${by === 'lidia' ? 'Lidia assigned' : 'Jav assigned'} ${s.name} to ${p.name}.`, 'info', s.id);
-  if (goal) send(s.id, goal, by);
+  if (goal) {
+    send(s.id, goal, by);
+    const first = s.log[s.log.length - 1];
+    if (first?.text === goal) first.goal = true;   // the goal lives in the details, not in the texts
+  }
   return s;
 }
 
@@ -209,7 +214,7 @@ async function turn(s, text, from, saved = [], logged = false) {
   let out;
   try {
     out = await runTurn({
-      prompt: promptWithFiles(s.moveNote ? `${s.moveNote}\n\n${text}` : text, saved),
+      prompt: promptWithFiles(`${s.moveNote ? `${s.moveNote}\n\n` : ''}${from === 'jav' ? takeNotes(s) : ''}${text}`, saved),
       effort: s.effort || store.state.settings.effort || undefined,
       cwd: cwdFor(s),
       additionalDirectories: projectExtraDirs(s),
@@ -217,7 +222,8 @@ async function turn(s, text, from, saved = [], logged = false) {
       model: s.model || store.state.settings.model,
       permissionMode: sdkMode(s),
       onQuery: (q) => queries.set(s.id, q),
-      mcpServers: { ...mcpServersFor(), fortress: agentScheduleServer(s.id) },
+      mcpServers: { ...mcpServersFor(), fortress: agentScheduleServer(s.id, [reactTool(() => s.log)]) },
+      onMockReact: from === 'jav' ? () => { const m = [...s.log].reverse().find(e => e.role === 'jav'); if (m) setReaction(m, 'peer', '👀'); } : undefined,
       appendSystem: ownerBrief(s),
       hooks: moneyHooks((tool, input, reason) => holdMoney(s, tool, input, reason)),
       abortController: ac,
@@ -288,6 +294,7 @@ Operate like an owner who wants the best possible result:
 - Plan before you act. Execute in small, verified steps. Check your work actually runs or reads well.
 - Critique yourself before reporting: score your output 1-10 on outcome, quality, and how good it looks and reads to a human, and fix the weakest part if you can.
 - Use skills. ${skills.length ? `Installed skills: ${skills.join(', ')}.` : 'Check which skills are installed.'} Whenever one fits (planning, design, frontend, testing, debugging, docs, review), invoke it instead of improvising.
+- Texting Jav: when Jav messages you directly, react to his text with the react tool first (👍 on it / done, 👎 can't, 👀 looking, ❓ unclear, 🔥 great), then answer. Keep replies to Jav short and plain, like a text.
 - Use Jav's connected apps (calendar, email, docs, CRM…) whenever they help.
 - Time and schedules: Jav's timezone is ${tz()} (this machine's clock says UTC; ignore that). There is no cron or OS scheduler here. For anything at a time of day or recurring, use your schedule_task tool: the fortress wakes you up and hands you the instruction.
 - Fellow owners will review your work and send fixes. Take them seriously, and push back with reasons when they're wrong.
@@ -500,13 +507,16 @@ export async function talkToLidia(text, files = []) {
   try {
     reply = await lidia.chat(text, saved, (full, input) => {
       const [, server = '', tool = full] = /^mcp__(.+?)__(.+)$/.exec(full) || [];
-      if (server === 'fortress' && (tool === 'fortress_status' || tool === 'read_agent')) return;
+      if (server === 'fortress' && ['fortress_status', 'read_agent', 'react'].includes(tool)) return;
       const app = server === 'fortress' ? '' : `${server.replace(/^claude_ai_/, '').replace(/[_-]+/g, ' ')}: `;
       acts.push(`${app}${tool.replace(/_/g, ' ')}${input?.name ? ` → ${input.name}` : input?.summary ? ` → ${input.summary}` : ''}`);
     });
   } catch (err) { reply = `I can't reach the surface right now: ${err.message}`; }
-  st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: reply, acts });
+  const asked = [...st.lidiaChat].reverse().find(m => m.role === 'jav');
+  // A reaction can be the whole answer; otherwise a reply with nothing in it still says something.
+  if (!reply.trim() && !acts.length && !asked?.reactions?.peer) reply = 'Copy that.';
+  if (reply.trim() || acts.length) st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: reply, acts });
   store.changed();
-  events.emit('bubble', { who: 'lidia', text: reply });
+  events.emit('bubble', { who: 'lidia', text: reply || asked?.reactions?.peer || '' });
   return { reply, acts };
 }

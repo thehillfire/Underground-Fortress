@@ -12,6 +12,7 @@ import { mcpServersFor } from './connectors.js';
 import { promptWithFiles } from './files.js';
 import * as sessions from './sessions.js';
 import * as projects from './projects.js';
+import { reactTool, takeNotes, MEANING } from './reactions.js';
 import * as skills from './skills.js';
 import { captainScheduleTools, tz } from './schedule.js';
 
@@ -46,6 +47,7 @@ const fail = (msg) => ({ content: [{ type: 'text', text: msg }], isError: true }
 
 // ------------------------------------------------------------------ captain's tools
 const TOOLS = [
+  reactTool(() => store.state.lidiaChat),
   tool('fortress_status', 'Roster of every agent: status, room, model, goal, last report, open question, API-equivalent spend.', {}, async () => {
     const st = store.state;
     return ok({
@@ -185,7 +187,7 @@ export async function chat(text, saved, onTool) {
 LATEST REPORTS YOU HANDLED:
 ${reports}
 
-Jav says: ${text}`;
+Jav says: ${takeNotes(st)}${text}`;
   const system = `${PERSONA}
 
 You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, organise the fortress into project rooms (each project holds several agents who share its folder; group related agents together), create agents in a project, move agents between projects, change an agent's model, hand agents data, stop agents, and update your standing orders.
@@ -194,13 +196,14 @@ Your agents are business owners. They improve their own work and review each oth
 Schedules: Jav's timezone is ${tz()}. The fortress is the scheduler (there is no cron on this phone): use schedule_task / list_schedules / cancel_schedule for anything at a time or recurring.
 Money is Jav's alone: you and the agents cannot spend, buy, pay or transfer. Anything like that waits for Jav's tap in the app.
 You can also use every app Jav has connected (tools named mcp__…: calendar, email, docs, CRM and the like). When Jav asks for something an app can do (put it on the calendar, check email, look something up), do it yourself right away with that tool and confirm what you did, with the specifics (date, time, title, link). If no connected tool can do it, say which app Jav needs to connect in the Armory. For long or hands-on work (code, files, research), assign an agent instead.
+TEXTING STYLE: this is a text thread on Jav's phone. React to every text from Jav with the react tool first, before anything else (${MEANING}), so he gets an instant answer. Then reply: lead with the one-line answer (the gist), add detail only if it matters. For a plain yes/no where the reaction says it all, a few words are enough.
 Use your tools; never just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
   const out = await runCaptain({ prompt: promptWithFiles(prompt, saved, { inlineText: true }), resume: st.lidiaSessionId,
     model: st.settings.lidiaModel, effort: st.settings.lidiaEffort || undefined, system,
     server: captainServer(), extraServers: mcpServersFor(), onTool, onInit: noteConnectors });
   if (out.sessionId) st.lidiaSessionId = out.sessionId;
   store.addSpend(out.costUsd, 'lidia');
-  return out.text || 'Copy that.';
+  return out.text || '';
 }
 
 /** Remember which connectors Claude Code reported (including ones from Jav's claude.ai account). */
