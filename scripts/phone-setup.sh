@@ -35,6 +35,8 @@ proot-distro login "$DISTRO" --bind "$APP:/root/fortress" -- bash -lc '
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
   fi
+  command -v git >/dev/null || { apt-get update; apt-get install -y git; }
+  git config --global --add safe.directory /root/fortress
   command -v claude >/dev/null || npm install -g @anthropic-ai/claude-code
   cd /root/fortress && npm install --no-audit --no-fund
 '
@@ -65,20 +67,53 @@ case "\${1:-start}" in
   login)  login ;;
   update) git -C "\$APP" pull --ff-only && bash "\$APP/scripts/phone-setup.sh" ;;
   mock|start)
+    if curl -s -m 2 -o /dev/null http://127.0.0.1:4321/api/health; then
+      echo "The fortress is already running."; termux-open-url http://127.0.0.1:4321; exit 0
+    fi
     if [ "\${1:-start}" = start ] && ! signed_in; then login; fi
     termux-wake-lock || true
+    # Actions the app may ask Termux to do. A fixed list: the app can never run arbitrary commands here.
+    rm -f "\$APP/.termux-action"
+    ( while :; do
+        if [ -s "\$APP/.termux-action" ]; then
+          read -r act arg < "\$APP/.termux-action"; rm -f "\$APP/.termux-action"
+          case "\$act" in
+            open-url) case "\$arg" in http://*|https://*) termux-open-url "\$arg" ;; esac ;;
+            keep-alive) termux-wake-lock || true; am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:com.termux >/dev/null 2>&1 ;;
+          esac
+        fi
+        sleep 1
+      done ) &
+    watcher=\$!
     (sleep 7; termux-open-url http://127.0.0.1:4321) &
-    if [ "\${1:-start}" = mock ]; then inside 'cd /root/fortress && npm run mock'; else inside 'cd /root/fortress && npm start'; fi
+    while :; do
+      if [ "\${1:-start}" = mock ]; then inside 'cd /root/fortress && FORTRESS_MOCK=1 exec node server/index.js'; else inside 'cd /root/fortress && exec node server/index.js'; fi
+      code=\$?
+      [ "\$code" = 75 ] && { echo "Restarting the fortress…"; continue; }               # restart / code update
+      [ "\$code" = 76 ] && { kill \$watcher 2>/dev/null; exec bash "\$APP/scripts/phone-setup.sh" --auto; }  # setup changed: rerun it
+      break
+    done
+    kill \$watcher 2>/dev/null || true
     termux-wake-unlock || true ;;
   *) sed -n '2,6p' "\$0" ;;
 esac
 LAUNCH
 chmod +x "$PREFIX/bin/fortress"
 
+# Opening Termux starts the fortress (and opens the app) unless it's already running.
+if ! grep -q 'fortress-autostart' "$HOME/.bashrc" 2>/dev/null; then
+  cat >> "$HOME/.bashrc" <<'RC'
+# fortress-autostart: open Termux and the fortress starts by itself
+if [ -z "$FORTRESS_NO_AUTOSTART" ] && [ -t 1 ] && command -v fortress >/dev/null; then
+  curl -s -m 2 -o /dev/null http://127.0.0.1:4321/api/health || fortress start
+fi
+RC
+fi
+
 if [ "$AUTO" = --auto ]; then
   say "Installed. Signing you in to Claude, then the game opens."
-  echo "  Next time just open Termux and type:  fortress"
+  echo "  Next time just open Termux: the fortress starts by itself."
   exec "$PREFIX/bin/fortress" start
 fi
 
-say "Done. Type  fortress  to sign in to Claude and open the game."
+say "Done. Open a new Termux session (or type  fortress) and the game starts."

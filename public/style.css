@@ -325,3 +325,5 @@ code.inline { background: #1c1b1f; padding: 0 4px; color: #ffd27a; font-size: 0.
 .sched-row b { font-family: var(--pixel); font-weight: 400; font-size: 12px; color: #9fd4ff; }
 .sched-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-schedule { background: #101418; border-left: 3px solid #5a9cff; }
+.sys-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sys-btns button { min-height: 46px; }

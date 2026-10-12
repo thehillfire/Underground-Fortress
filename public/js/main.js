@@ -40,6 +40,7 @@ function connect() {
     $('#conn').textContent = '';
     // Tell the fortress Jav's real timezone (the phone's Linux layer thinks it's UTC).
     api('POST', '/api/client', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(() => {});
+    loadVersion();
   };
 }
 
@@ -564,6 +565,14 @@ function mountSettings() {
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
     </form>
+    <h4>System</h4>
+    <div class="card sys"><div><b id="sys-ver">Checking version…</b><div class="muted small" id="sys-changes"></div></div></div>
+    <div class="sys-btns">
+      <button class="primary" id="sys-update">UPDATE</button>
+      <button id="sys-restart">RESTART</button>
+      <button id="sys-alive">KEEP ALIVE</button>
+    </div>
+    <p class="muted small">KEEP ALIVE opens Termux's Android settings: tap <b>Battery</b> → <b>Unrestricted</b> so the fortress keeps running with the screen off.</p>
     <h4>Schedules</h4>
     <p class="muted small">The fortress is the alarm clock (your phone has no cron). Times are in ${esc(st.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)}. Agents and Lidia add these themselves when you ask for something at a time.</p>
     <div id="g-sched">${(state.schedules || []).filter(j => j.enabled).map(j => `<div class="sched-row"><b>${esc(j.time)}</b><span>${esc(j.agent)} · ${esc(dayText(j.days))} · ${esc(j.instruction)}</span><button class="small danger" data-unsched="${esc(j.id)}">X</button></div>`).join('') || '<p class="muted">Nothing scheduled.</p>'}</div>
@@ -575,6 +584,14 @@ function mountSettings() {
     <p class="muted small" ${installPrompt ? 'hidden' : ''}>No install button? In Chrome open the ⋮ menu → <b>Add to Home screen</b> → Install.</p>
     <h4>Voice</h4>
     <p class="muted">${voice.voiceSupported ? 'Tap <b>TALK</b> (or press <kbd>M</kbd> on a keyboard) and speak. Start with “Lidia, …” or a dweller’s name to address them; otherwise it goes to whoever is open.' : 'Your browser has no speech recognition. Use Chrome or Edge.'}</p>`;
+  loadVersion();
+  $('#sys-update').onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = 'UPDATING…';
+    try { const r = await api('POST', '/api/system/update'); toast(r.message); if (!r.updated) { b.disabled = false; b.textContent = 'UPDATE'; } else waitForRestart(); }
+    catch (err) { toast(err.message); b.disabled = false; b.textContent = 'UPDATE'; }
+  };
+  $('#sys-restart').onclick = async () => { await api('POST', '/api/system/restart').catch(() => {}); toast('Restarting…'); waitForRestart(); };
+  $('#sys-alive').onclick = async () => { try { const r = await api('POST', '/api/system/keep-alive'); toast(r.message); } catch (err) { toast(err.message); } };
   $('#g-sched').querySelectorAll('[data-unsched]').forEach(b => b.onclick = async () => { await api('DELETE', `/api/schedules/${b.dataset.unsched}`); b.closest('.sched-row').remove(); });
   api('GET', '/api/health').then(h => {
     const line = h.mock ? '<b>Mock mode.</b> Survivors are fake; no Claude usage.'
@@ -720,6 +737,28 @@ function chime() {
     g.gain.setValueAtTime(0.15, audio.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.4);
     o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.4);
   } catch {}
+}
+
+// ------------------------------------------------------------------ system: version + update without Termux
+let version = null;
+async function loadVersion() {
+  try { version = await api('GET', '/api/system/version'); } catch { return; }
+  const setup = $('#nav [data-tab="settings"]');
+  setup.querySelector('.badge')?.remove();
+  if (version.behind > 0) setup.insertAdjacentHTML('beforeend', '<span class="badge">NEW</span>');
+  const v = $('#sys-ver');
+  if (!v) return;
+  v.textContent = version.behind > 0 ? `Update available (${version.behind} new)` : version.behind === 0 ? `Up to date · ${version.commit}` : `Version ${version.commit}`;
+  $('#sys-changes').innerHTML = version.changes.map(c => `• ${esc(c)}`).join('<br>');
+}
+/** After an update/restart, wait for the fortress to come back and reload into the new version. */
+function waitForRestart() {
+  let tries = 0;
+  const t = setInterval(async () => {
+    tries++;
+    try { const r = await fetch('/api/health', { cache: 'no-store' }); if (r.ok && tries > 2) { clearInterval(t); location.reload(); } } catch {}
+    if (tries > 90) clearInterval(t);
+  }, 2000);
 }
 
 // ------------------------------------------------------------------ home-screen app

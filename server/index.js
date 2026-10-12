@@ -15,6 +15,7 @@ import { MODELS } from './lidia.js';
 import { ensureAssets } from './assets.js';
 import { refreshUsage, startUsagePolling } from './usage.js';
 import { startScheduler, removeJob, addJob } from './schedule.js';
+import * as system from './system.js';
 
 const PORT = Number(process.env.PORT || 4321);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -80,6 +81,10 @@ app.post('/api/client', wrap((r) => {
   try { new Intl.DateTimeFormat('en-US', { timeZone: t }); } catch { throw new Error('bad timezone'); }
   if (t && store.state.settings.timezone !== t) { store.state.settings.timezone = t; store.changed(); }
 }));
+app.get('/api/system/version', wrap(() => system.version()));
+app.post('/api/system/update', wrap(() => system.update()));
+app.post('/api/system/restart', wrap(() => { system.restartSoon(75); return { message: 'Restarting…' }; }));
+app.post('/api/system/keep-alive', wrap(() => { system.termuxAction('keep-alive'); return { message: 'Opening Termux settings…' }; }));
 app.post('/api/schedules', wrap((r) => addJob({ ...r.body, by: 'jav' })));
 app.delete('/api/schedules/:id', wrap((r) => ({ ok: removeJob(r.params.id) })));
 app.post('/api/usage/refresh', wrap(async () => { await refreshUsage(); return store.state.usage; }));
