@@ -108,5 +108,9 @@ class Store extends EventEmitter {
   }
 }
 
+export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
+// Settings Jav (and Lidia, on his behalf) may change.
+export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort'];
+
 export const store = new Store();
 export const id = (p) => `${p}_${Math.random().toString(36).slice(2, 9)}`;

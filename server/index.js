@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { store, ROOT, id } from './store.js';
+import { store, ROOT, id, SETTINGS_KEYS } from './store.js';
 import * as sessions from './sessions.js';
 import * as projects from './projects.js';
 import * as skills from './skills.js';
@@ -81,8 +81,7 @@ app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
-  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort'];
-  for (const k of allowed) if (k in r.body) store.state.settings[k] = r.body[k];
+  for (const k of SETTINGS_KEYS) if (k in r.body) store.state.settings[k] = r.body[k];
   store.changed();
 }));
 
@@ -102,6 +101,7 @@ app.post('/api/client', wrap((r) => {
 app.get('/api/system/version', wrap(() => system.version()));
 app.post('/api/system/update', wrap(() => system.update()));
 app.post('/api/system/restart', wrap(() => { system.restartSoon(75); return { message: 'Restarting…' }; }));
+app.post('/api/notify-test', wrap(() => { setTimeout(() => sessions.events.emit('notify', { text: 'This is a test from Lidia. Notifications are working.' }), 4000); }));
 app.post('/api/system/keep-alive', wrap(() => { system.termuxAction('keep-alive'); return { message: 'Opening Termux settings…' }; }));
 app.post('/api/schedules', wrap((r) => addJob({ ...r.body, by: 'jav' })));
 app.delete('/api/schedules/:id', wrap((r) => ({ ok: removeJob(r.params.id) })));
@@ -159,7 +159,15 @@ store.on('change', () => {
   if (pending) return;
   pending = setTimeout(() => { pending = null; broadcast({ type: 'state', state: snapshot() }); }, 120);
 });
-for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
+// Notifications are only for when Lidia comes to Jav (her replies and decisions she can't make), not for other agents finishing.
+// App open or minimized: the app shows it. App closed (no live connection): the Termux side raises it, if Termux:API is installed.
+sessions.events.on('notify', ({ text, sessionId }) => {
+  const body = String(text).replace(/\s+/g, ' ').trim().slice(0, 180);
+  if (!body) return;
+  broadcast({ type: 'notify', title: 'Lidia', text: body, sessionId });
+  if (!wss.clients.size) { try { system.termuxAction('notify', body); } catch {} }
+});
+for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end', 'lidia-live']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
 
 await ensureAssets();
 startUsagePolling();

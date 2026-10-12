@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { store, id, WORKSPACES } from './store.js';
+import { store, id, WORKSPACES, PERMISSION_MODES } from './store.js';
 import { runTurn, runReview } from './agent.js';
 import { moneyHooks } from './guard.js';
 import { installed as installedSkills } from './skills.js';
@@ -147,7 +147,7 @@ export function move(sid, projectId) {
   return s;
 }
 
-export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
+export { PERMISSION_MODES };
 const queries = new Map();   // session id -> live SDK query, for mid-turn mode changes
 const modeFor = (s) => s.permissionMode || store.state.settings.permissionMode || 'acceptEdits';
 // What Claude Code actually runs in. Bypass runs as accept-edits with every remaining prompt approved
@@ -360,6 +360,7 @@ async function report(s, result, isError) {
     store.feed(`${s.name} needs Jav: ${d.question}`, 'alert', s.id);
     setStatus(s, 'needs_jav', 'waiting for Jav');
     events.emit('alert', { sessionId: s.id, text: d.question });
+    events.emit('notify', { text: `${s.name}: ${d.question}`, sessionId: s.id });   // Lidia is bringing Jav a decision
   }
 }
 
@@ -503,19 +504,31 @@ export async function talkToLidia(text, files = []) {
   store.changed();
   events.emit('bubble', { who: 'lidia-thinking' });
   const acts = [];
-  let reply;
+  // What Jav watches while she works: her thinking, the commands she runs, the reply as it's written.
+  const live = { started: Date.now(), thinking: '', acts, text: '' };
+  let liveTimer = null;
+  const push = () => { if (!liveTimer) liveTimer = setTimeout(() => { liveTimer = null; events.emit('lidia-live', { ...live, acts: [...acts] }); }, 120); };
+  let reply, thinking = '';
   try {
-    reply = await lidia.chat(text, saved, (full, input) => {
+    ({ text: reply, thinking } = await lidia.chat(text, saved, (full, input) => {
       const [, server = '', tool = full] = /^mcp__(.+?)__(.+)$/.exec(full) || [];
       if (server === 'fortress' && ['fortress_status', 'read_agent', 'react'].includes(tool)) return;
       const app = server === 'fortress' ? '' : `${server.replace(/^claude_ai_/, '').replace(/[_-]+/g, ' ')}: `;
       acts.push(`${app}${tool.replace(/_/g, ' ')}${input?.name ? ` → ${input.name}` : input?.summary ? ` → ${input.summary}` : ''}`);
-    });
+      push();
+    }, {
+      onThinking: (t) => { live.thinking += t; push(); },
+      onText: (t, reset) => { live.text = reset ? '' : live.text + t; push(); },
+    }));
   } catch (err) { reply = `I can't reach the surface right now: ${err.message}`; }
   const asked = [...st.lidiaChat].reverse().find(m => m.role === 'jav');
   // A reaction can be the whole answer; otherwise a reply with nothing in it still says something.
   if (!reply.trim() && !acts.length && !asked?.reactions?.peer) reply = 'Copy that.';
-  if (reply.trim() || acts.length) st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: reply, acts });
+  clearTimeout(liveTimer);
+  events.emit('lidia-live', null);
+  if (reply.trim()) events.emit('notify', { text: reply });   // she has something for Jav
+  const thought = thinking.trim() ? { thinking: thinking.trim().slice(-6000), thoughtMs: Date.now() - live.started } : {};
+  if (reply.trim() || acts.length) st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: reply, acts, ...thought });
   store.changed();
   events.emit('bubble', { who: 'lidia', text: reply || asked?.reactions?.peer || '' });
   return { reply, acts };

@@ -32,6 +32,8 @@ function connect() {
     } else if (m.type === 'report') game.report(m.sessionId);
     else if (m.type === 'visit') game.visit(m.from, m.to);
     else if (m.type === 'visit-end') game.visitEnd(m.from);
+    else if (m.type === 'lidia-live') talk.setLive(m.started ? m : null);
+    else if (m.type === 'notify') notifyJav(m);
     else if (m.type === 'alert') {
       const s = state?.sessions.find(x => x.id === m.sessionId);
       chime();
@@ -721,6 +723,10 @@ function mountSettings() {
       <button id="sys-alive">KEEP ALIVE</button>
     </div>
     <p class="muted small">KEEP ALIVE opens Termux's Android settings: tap <b>Battery</b> → <b>Unrestricted</b> so the fortress keeps running with the screen off.</p>
+    <h4>Notifications</h4>
+    <div class="card"><div><b id="nt-state">…</b><div class="muted small">You get a phone notification when Lidia comes to you: her replies, and decisions she can't make. Not when other agents finish.</div></div></div>
+    <div class="sys-btns"><button class="primary" id="nt-on">TURN ON</button><button id="nt-test">TEST</button></div>
+    <p class="muted small">With the app closed, notifications come through Termux:API (install the <b>Termux:API</b> app from F-Droid once).</p>
     <h4>Schedules</h4>
     <p class="muted small">The fortress is the alarm clock (your phone has no cron). Times are in ${esc(st.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)}. Agents and Lidia add these themselves when you ask for something at a time.</p>
     <div id="g-sched">${(state.schedules || []).filter(j => j.enabled).map(j => `<div class="sched-row"><b>${esc(j.time)}</b><span>${esc(j.agent)} · ${esc(dayText(j.days))} · ${esc(j.instruction)}</span><button class="small danger" data-unsched="${esc(j.id)}">X</button></div>`).join('') || '<p class="muted">Nothing scheduled.</p>'}</div>
@@ -739,6 +745,15 @@ function mountSettings() {
     catch (err) { toast(err.message); b.disabled = false; b.textContent = 'UPDATE'; }
   };
   $('#sys-restart').onclick = async () => { await api('POST', '/api/system/restart').catch(() => {}); toast('Restarting…'); waitForRestart(); };
+  refreshNotifyCard = () => {
+    const p = canNotify() ? Notification.permission : 'unsupported';
+    $('#nt-state').textContent = p === 'granted' ? 'Notifications are on' : p === 'denied' ? 'Blocked in Android settings' : p === 'unsupported' ? 'Not supported in this browser' : 'Notifications are off';
+    $('#nt-on').hidden = p === 'granted' || p === 'unsupported';
+    $('#nt-on').textContent = p === 'denied' ? 'HOW TO UNBLOCK' : 'TURN ON';
+  };
+  $('#nt-on').onclick = () => (Notification.permission === 'denied' ? toast('Android Settings → Apps → Fortress (or Chrome) → Notifications → Allow') : askNotify());
+  $('#nt-test').onclick = () => { api('POST', '/api/notify-test').catch(e => toast(e.message)); toast('Sent: minimize the app to see it'); };
+  refreshNotifyCard();
   $('#sys-alive').onclick = async () => { try { const r = await api('POST', '/api/system/keep-alive'); toast(r.message); } catch (err) { toast(err.message); } };
   $('#g-sched').querySelectorAll('[data-unsched]').forEach(b => b.onclick = async () => { await api('DELETE', `/api/schedules/${b.dataset.unsched}`); b.closest('.sched-row').remove(); });
   api('GET', '/api/health').then(h => {
@@ -758,6 +773,21 @@ function mountSettings() {
     toast('Settings saved');
   };
 }
+
+// ------------------------------------------------------------------ notifications (only when Lidia comes to Jav)
+const canNotify = () => 'Notification' in window && 'serviceWorker' in navigator;
+function askNotify() {
+  if (canNotify() && Notification.permission === 'default') Notification.requestPermission().then(() => refreshNotifyCard?.());
+}
+function notifyJav(m) {
+  // In the app and looking at Lidia: no need. Otherwise raise a phone notification.
+  if (!canNotify() || Notification.permission !== 'granted') return;
+  if (!document.hidden && (talk.currentPeer() === 'lidia' || !m.sessionId && talk.isOpen())) return;
+  navigator.serviceWorker.ready.then(r => r.showNotification(m.title || 'Lidia', {
+    body: m.text, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png', tag: 'lidia', renotify: true, vibrate: [120, 60, 120],
+  })).catch(() => {});
+}
+let refreshNotifyCard = null;
 
 // ------------------------------------------------------------------ mic
 const micBtn = $('#mic');
@@ -971,6 +1001,7 @@ talk.initTalk({
   toast: (t) => toast(t),
   openOrders: () => open('lidia'),
   startMic: () => startMic(),
+  onSend: () => askNotify(),
   onClose: () => { game.select(selected); document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (tab && !['session', 'new'].includes(tab) ? (['repos','connectors','skills'].includes(tab) ? 'connectors' : tab) : 'base'))); },
 });
 loadArt().then(connect);

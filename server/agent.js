@@ -105,8 +105,8 @@ export async function oneShot({ system, prompt, model }) {
  * Lidia's own conversation: a persistent session whose only tools are the
  * fortress controls (no shell, no files). Resumed every time Jav talks to her.
  */
-export async function runCaptain({ prompt, resume, model, effort, system, server, extraServers = {}, onTool, onInit }) {
-  if (MOCK) return mockCaptain({ prompt: promptText(prompt), onTool });
+export async function runCaptain({ prompt, resume, model, effort, system, server, extraServers = {}, onTool, onInit, onThinking, onText }) {
+  if (MOCK) return mockCaptain({ prompt: promptText(prompt), onTool, onThinking, onText });
   const q = query({
     prompt: asInput(prompt),
     options: {
@@ -123,16 +123,28 @@ export async function runCaptain({ prompt, resume, model, effort, system, server
         ? { behavior: 'allow', updatedInput: input }
         : { behavior: 'deny', message: 'The captain only uses fortress tools and connectors. Assign an agent for files or shell work.' },
       maxTurns: 16,
+      // Jav reads her thinking as it happens (faded, above her reply): stream it, summarized.
+      thinking: { type: 'adaptive', display: 'summarized' },
+      includePartialMessages: true,
       hooks: moneyHooks(null),
       ...CLAUDE_PATH,
     },
   });
-  const out = { text: '', costUsd: 0, sessionId: resume };
+  const out = { text: '', costUsd: 0, sessionId: resume, thinking: '' };
+  let streamed = false;
   for await (const m of q) {
     noteRateLimit(m);
     if (m.type === 'system' && m.subtype === 'init') { out.sessionId = m.session_id; onInit?.(m); }
-    else if (m.type === 'assistant') {
-      for (const b of m.message?.content || []) if (b.type === 'tool_use') onTool?.(b.name, b.input);
+    else if (m.type === 'stream_event') {
+      const d = m.event?.type === 'content_block_delta' ? m.event.delta : null;
+      if (d?.type === 'thinking_delta' && d.thinking) { streamed = true; out.thinking += d.thinking; onThinking?.(d.thinking); }
+      else if (d?.type === 'text_delta' && d.text) onText?.(d.text);
+    } else if (m.type === 'assistant') {
+      for (const b of m.message?.content || []) {
+        if (b.type === 'tool_use') onTool?.(b.name, b.input);
+        else if (b.type === 'thinking' && b.thinking && !streamed) { out.thinking += b.thinking; onThinking?.(b.thinking); }
+        else if (b.type === 'text' && b.text) onText?.('\n', true);   // a text block ended: next one starts fresh
+      }
     } else if (m.type === 'result') {
       out.text = m.result || out.text;
       out.costUsd = m.total_cost_usd || 0;
@@ -218,8 +230,9 @@ async function mockOneShot(prompt) {
 }
 
 // Mock captain: understands a few phrases and calls the real fortress tools, so the UI is testable offline.
-async function mockCaptain({ prompt, onTool }) {
-  await sleep(600);
+async function mockCaptain({ prompt, onTool, onThinking, onText }) {
+  for (const t of ['Jav wants a status check. ', 'Pull the roster first, then look at who is blocked ', 'and lead with the one-line answer.']) { await sleep(250); onThinking?.(t); }
+  await sleep(300);
   const call = async (name, args) => {
     onTool?.(`mcp__fortress__${name}`, args);
     return mockTools[name]?.(args);
@@ -238,7 +251,8 @@ async function mockCaptain({ prompt, onTool }) {
     const red = (st.agents || []).filter(a => a.status === 'needs_jav');
     reply = `${(st.agents || []).length} survivors on shift. ` + (red.length ? `${red.map(a => a.name).join(', ')} ${red.length > 1 ? 'are' : 'is'} waiting on you. ` : 'Nobody is blocked. ') + 'Everyone else is working. Want me to push anyone?';
   }
-  return { text: reply, costUsd: 0.006, sessionId: 'mock-lidia' };
+  for (const w of reply.split(/(?<= )/)) { await sleep(25); onText?.(w); }
+  return { text: reply, costUsd: 0.006, sessionId: 'mock-lidia', thinking: 'Jav wants a status check. Pull the roster first, then look at who is blocked and lead with the one-line answer.' };
 }
 export const mockTools = {};
 

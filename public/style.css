@@ -408,3 +408,22 @@ code.inline { background: #1c1b1f; padding: 0 4px; color: #ffd27a; font-size: 0.
 /* The hidden attribute always wins over a display rule */
 [hidden] { display: none !important; }
 .sys small { color: #5f5862; }
+.meta .seen { color: #ff5a4a; font-weight: 500; margin-left: 6px; }
+
+/* ---- Lidia/agent at work: avatar, faded thinking, commands */
+.them-row { display: flex; align-items: flex-end; gap: 8px; align-self: flex-start; max-width: 92%; }
+.them-row .ava { width: 28px; height: 28px; flex: none; margin-bottom: 2px; }
+.them-row .ava img { width: 28px; height: 28px; border-radius: 50%; image-rendering: pixelated; border: 1px solid #5a2a30; display: block; }
+.live { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-family: var(--chat-font); }
+.live-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #b9b0bb; }
+.live-head small { color: #6e6670; }
+.dots { display: inline-flex; gap: 3px; } .dots i { width: 6px; height: 6px; border-radius: 50%; background: #b9b0bb; animation: blink 1.2s infinite ease-in-out; }
+.dots i:nth-child(2) { animation-delay: 0.2s; } .dots i:nth-child(3) { animation-delay: 0.4s; }
+.think { font-family: var(--chat-font); font-size: 13px; line-height: 1.4; font-style: italic; color: #7c737f; white-space: pre-wrap; border-left: 2px solid #3a2e3c; padding: 2px 0 2px 10px; margin: 2px 0 6px 36px; }
+.live .think { margin: 0; max-height: 7.2em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 40%); mask-image: linear-gradient(to bottom, transparent, #000 40%); }
+.thought { align-self: flex-start; margin: 4px 0 0 36px; padding: 2px 10px; border-radius: 12px; background: transparent; border: 1px solid #2f2833; box-shadow: none; font-family: var(--chat-font); font-size: 12px; color: #7c737f; min-height: 0; text-transform: none; letter-spacing: 0; }
+.thought i { font-style: normal; margin-left: 4px; }
+.cmds { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.cmds span { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; padding: 3px 9px; border-radius: 8px; background: #17131a; color: #8fb99c; border: 1px solid #2a2230; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmds span.ok::before { content: "✓ "; } .cmds span.run { color: #e8d9a0; } .cmds span.run::before { content: "▸ "; }
+.bub.streaming { opacity: 0.95; }

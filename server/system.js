@@ -14,8 +14,10 @@ const run = (cmd, args, timeout = 300_000) => new Promise((resolve) => {
 
 /** Ask the Termux side (the launcher's watcher) to do one of its fixed actions. */
 export function termuxAction(action, arg = '') {
-  if (!['open-url', 'keep-alive'].includes(action)) throw new Error('unknown action');
-  fs.writeFileSync(path.join(ROOT, '.termux-action'), `${action} ${arg}\n`);
+  if (!['open-url', 'keep-alive', 'notify'].includes(action)) throw new Error('unknown action');
+  // One line, no control characters: the launcher reads this file line by line.
+  const clean = String(arg).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 180);
+  fs.writeFileSync(path.join(ROOT, '.termux-action'), `${action} ${clean}\n`);
 }
 
 export async function version() {

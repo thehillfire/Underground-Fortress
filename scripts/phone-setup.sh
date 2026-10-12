@@ -17,7 +17,7 @@ say() { printf '\n\033[1;31m▌ %s\033[0m\n' "$*"; }
 
 say "[1/4] Termux packages"
 pkg update -y -o Dpkg::Options::=--force-confnew
-pkg install -y -o Dpkg::Options::=--force-confnew proot-distro git termux-tools
+pkg install -y -o Dpkg::Options::=--force-confnew proot-distro git termux-tools termux-api
 
 say "[2/4] Ubuntu userland (one time, ~300 MB)"
 if ! proot-distro login "$DISTRO" -- true 2>/dev/null; then
@@ -80,6 +80,7 @@ case "\${1:-start}" in
           case "\$act" in
             open-url) case "\$arg" in http://*|https://*) termux-open-url "\$arg" ;; esac ;;
             keep-alive) termux-wake-lock || true; am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:com.termux >/dev/null 2>&1 ;;
+            notify) command -v termux-notification >/dev/null && termux-notification --id fortress-lidia --title Lidia --content "\$arg" --priority high --action "termux-open-url http://127.0.0.1:4321" || true ;;
           esac
         fi
         sleep 1

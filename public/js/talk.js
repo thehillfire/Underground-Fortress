@@ -15,7 +15,9 @@ let ctx = null;        // { api, getState, openSession, openDetails, openOrders,
 let mode = null;       // 'dialogue' | 'reports' | 'chat'
 let peer = 'lidia';    // who the chat is with: 'lidia' or a session id
 let typing = null;     // typewriter timer
-let pending = null;    // { peer, text } sent, not yet in state
+let pending = null;    // { peer, text, ts } sent, not yet in state
+let live = null;       // Lidia mid-reply: { started, thinking, acts, text }
+const openThoughts = new Set();   // which "Thought for…" blocks Jav expanded
 let attach = null;
 
 const needsHelp = (s) => s.status === 'needs_jav' || s.status === 'error' || !!s.pendingPermission || !!s.pendingQuestion;
@@ -49,6 +51,12 @@ export function initTalk(c) {
 }
 
 export const isOpen = () => !$('#talk').hidden;
+
+/** Lidia's live state while she works (null when she's done). */
+export function setLive(l) {
+  live = l;
+  if (currentPeer() === 'lidia') update(ctx.getState(), { force: true });
+}
 export const currentPeer = () => (isOpen() && mode === 'chat' ? peer : null);
 
 /** Lidia's dialogue scene (tap her in the bunker). */
@@ -87,8 +95,9 @@ export function closeTalk() {
 /** Send a text to whoever the chat is with (also used by the mic). */
 export async function send(text, files = []) {
   if (mode !== 'chat') openChat(peer);
+  ctx.onSend?.();
   const to = peer;
-  pending = { peer: to, text: text || `(${files.length} attachment${files.length > 1 ? 's' : ''})` };
+  pending = { peer: to, ts: Date.now(), text: text || `(${files.length} attachment${files.length > 1 ? 's' : ''})` };
   update(ctx.getState(), { force: true, scroll: true });
   try {
     if (to === 'lidia') await ctx.api('POST', '/api/lidia', { text, files });
@@ -136,27 +145,62 @@ export function update(st, opt = {}) {
 
   const items = s ? agentItems(s) : lidiaItems(st);
   const mine = pending && pending.peer === peer;
-  if (mine) items.push({ ts: Date.now(), role: 'jav', text: pending.text, sending: true });
-  const working = s ? s.status === 'working' : !!mine;
+  // Show the "Sending…" copy only until the real message is in the thread (no duplicate).
+  const landed = mine && items.some(i => i.role === 'jav' && i.ts >= pending.ts - 5000 && (i.text === pending.text || i.files?.length));
+  if (mine && !landed) items.push({ ts: Date.now(), role: 'jav', text: pending.text, sending: true });
+  const working = s ? s.status === 'working' : !!(mine || live);
   const card = s ? actionCard(s) : '';
 
   const el = $('#talk-bubbles');
   const lastTs = items[items.length - 1]?.ts || 0;
   const reacts = items.map(i => Object.values(i.reactions || {}).join('')).join('|');
-  const key = `${peer}:${items.length}:${lastTs}:${reacts}:${working}:${card.length}:${s?.activity || ''}`;
+  const liveKey = !s && live ? `${live.thinking.length}/${live.acts.length}/${live.text.length}` : '';
+  const toolsKey = s ? s.log.length : '';
+  const key = `${peer}:${items.length}:${lastTs}:${reacts}:${working}:${card.length}:${s?.activity || ''}:${liveKey}:${toolsKey}:${[...openThoughts].join()}`;
   if (el.dataset.key === key && !opt.force) return;
   el.dataset.key = key;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  el.innerHTML = thread(items) + card +
-    (working ? `<div class="typing"><span></span><span></span><span></span>${s?.activity && s.activity !== 'thinking' ? `<em>${esc(s.activity)}</em>` : ''}</div>` : '') +
+  const lastMine = items.map(i => i.role).lastIndexOf('jav');
+  const seen = lastMine >= 0 && (working || items.slice(lastMine + 1).some(i => i.role === 'peer'));
+  el.innerHTML = thread(items, seen ? lastMine : -1) + card + (working ? (s ? agentWorking(s) : lidiaLive()) : '') +
     (items.length ? '' : `<div class="sys">${s ? `Say hi, send a photo, or give ${esc(s.name)} a job.` : 'Text her anything: “how is everyone?”, “spin up a researcher on sonnet”, “did the lead list finish?”'}</div>`);
   if (atBottom || opt.scroll || mine) el.scrollTop = el.scrollHeight;
   bindCard(s);
+  el.querySelectorAll('[data-thought]').forEach(d => d.onclick = () => {
+    const k = d.dataset.thought; openThoughts.has(k) ? openThoughts.delete(k) : openThoughts.add(k);
+    update(ctx.getState(), { force: true });
+  });
+}
+
+const dots = '<span class="dots"><i></i><i></i><i></i></span>';
+const secs = (ms) => `${Math.max(1, Math.round(ms / 1000))}s`;
+
+/** Lidia at work: her avatar, what she's doing, her thinking (faded), each command she runs, the reply as it's written. */
+function lidiaLive() {
+  const l = live || { started: pending?.ts || Date.now(), thinking: '', acts: [], text: '' };
+  const phase = l.text ? 'writing' : l.acts.length && !l.thinking.endsWith(' ') ? 'working' : l.thinking ? 'thinking' : 'reading your text';
+  const think = l.thinking.trim();
+  return `<div class="them-row"><span class="ava">${avatarImg('lidia')}</span><div class="live">
+    <div class="live-head">${dots} Lidia is ${phase}… <small>${secs(Date.now() - l.started)}</small></div>
+    ${think ? `<div class="think live-think">${esc(think.slice(-700))}</div>` : ''}
+    ${l.acts.length ? `<div class="cmds">${l.acts.map((a, i) => `<span class="${i === l.acts.length - 1 && !l.text ? 'run' : 'ok'}">${esc(a)}</span>`).join('')}</div>` : ''}
+    ${l.text ? `<div class="bub them tail streaming"><div class="msg-body">${rich(l.text)}</div></div>` : ''}
+  </div></div>`;
+}
+
+/** An agent at work: typing dots, what it's doing, and its last few commands. */
+function agentWorking(s) {
+  const since = s.log.map(e => e.role).lastIndexOf('claude');
+  const cmds = s.log.slice(since + 1).filter(e => e.role === 'tool').slice(-3);
+  return `<div class="them-row"><span class="ava">${avatarImg(s.id)}</span><div class="live">
+    <div class="live-head">${dots} ${esc(s.name)} is ${esc(s.activity || 'working')}…</div>
+    ${cmds.length ? `<div class="cmds">${cmds.map((c, i) => `<span class="${i === cmds.length - 1 ? 'run' : 'ok'}">${esc(c.tool || 'tool')}: ${esc(String(c.text).slice(0, 80))}</span>`).join('')}</div>` : ''}
+  </div></div>`;
 }
 
 function lidiaItems(st) {
   return [
-    ...st.lidiaChat.map(m => ({ ts: m.ts, role: m.role === 'jav' ? 'jav' : 'peer', text: m.text, files: m.files, acts: m.acts, reactions: m.reactions, owner: 'lidia' })),
+    ...st.lidiaChat.map(m => ({ ts: m.ts, role: m.role === 'jav' ? 'jav' : 'peer', text: m.text, files: m.files, acts: m.acts, reactions: m.reactions, owner: 'lidia', thinking: m.thinking, thoughtMs: m.thoughtMs })),
     ...(st.reports || []).map(r => ({ ts: r.ts, role: 'sys', text: `${r.name} reported → ${r.decision === 'done' ? 'stood down' : r.decision === 'escalate' ? 'needs you' : 'kept going'}${r.note ? `: ${r.note}` : ''}` })),
   ].sort((a, b) => a.ts - b.ts).reduce((out, m) => {
     // A run of reports between texts collapses to the latest one, so the thread stays a conversation.
@@ -173,7 +217,7 @@ function agentItems(s) {
 }
 
 /** Bubbles grouped like a messaging app: consecutive texts from one side share a tail; time stamps between gaps. */
-function thread(items) {
+function thread(items, seenIdx = -1) {
   let out = '', prevTs = 0;
   items.forEach((m, i) => {
     if (m.ts - prevTs > 15 * 60e3) out += `<div class="stamp">${dayTime(m.ts)}</div>`;
@@ -183,11 +227,13 @@ function thread(items) {
     const tail = !next || next.role !== m.role || next.ts - m.ts > 5 * 60e3;
     const theirs = m.role === 'jav' ? m.reactions?.peer : m.reactions?.jav;
     const owner = m.owner || peer;
-    out += `<div class="bub ${m.role === 'jav' ? 'me' : 'them'}${tail ? ' tail' : ''}${theirs ? ' reacted' : ''}${m.sending || m.queued ? ' dim' : ''}" data-ts="${m.ts}" data-owner="${esc(owner)}" data-role="${m.role}">
+    const thought = m.thinking ? `<button class="thought ${openThoughts.has(String(m.ts)) ? 'open' : ''}" data-thought="${m.ts}">Thought for ${secs(m.thoughtMs || 0)} <i>${openThoughts.has(String(m.ts)) ? '▾' : '▸'}</i></button>${openThoughts.has(String(m.ts)) ? `<div class="think">${esc(m.thinking)}</div>` : ''}` : '';
+    if (m.role !== 'jav') out += `${thought}<div class="them-row"><span class="ava">${tail ? avatarImg(owner) : ''}</span>`;
+    out += `<div class="bub ${m.role === 'jav' ? 'me' : 'them'}${tail ? ' tail' : ''}${theirs ? ' reacted' : ''}${m.queued ? ' dim' : ''}" data-ts="${m.ts}" data-owner="${esc(owner)}" data-role="${m.role}">
       ${m.text ? `<div class="msg-body">${rich(m.text)}</div>` : ''}${fileChips(owner, m.files)}
       ${m.acts?.length ? `<div class="acts">${m.acts.map(a => `<span>${esc(a)}</span>`).join('')}</div>` : ''}
       ${theirs ? `<span class="react">${theirs}</span>` : ''}
-    </div>${tail ? `<div class="meta ${m.role === 'jav' ? 'me' : 'them'}">${m.sending ? 'Sending…' : m.queued ? 'Delivered after this turn' : time(m.ts)}</div>` : ''}`;
+    </div>${m.role !== 'jav' ? '</div>' : ''}${tail ? `<div class="meta ${m.role === 'jav' ? 'me' : 'them'}">${m.queued ? 'Delivered after this turn' : time(m.ts)}${i === seenIdx ? ' <b class="seen">● Seen</b>' : ''}</div>` : ''}`;
   });
   return out;
 }
@@ -234,7 +280,7 @@ function renderHeader(st, s) {
     status.className = needsHelp(s) ? 'red' : s.status === 'working' ? 'green' : '';
   } else {
     const busy = st.sessions.filter(x => x.status === 'working').length;
-    status.textContent = pending?.peer === 'lidia' ? 'typing…' : busy ? `watching ${busy} at work` : 'on the bridge';
+    status.textContent = live ? (live.text ? 'writing…' : 'thinking…') : pending?.peer === 'lidia' ? 'typing…' : busy ? `watching ${busy} at work` : 'on the bridge';
     status.className = 'green';
   }
   const nm = s ? s.name : 'Lidia';
@@ -377,12 +423,29 @@ function drawPortrait() {
   g.drawImage(p, 0, 0, cv.width, cv.height);
 }
 
+const avatars = new Map();
+/** Small round avatar for the thread: Lidia's portrait or the agent's own character. */
+function avatarImg(who) {
+  const s = who === 'lidia' ? null : ctx.getState()?.sessions.find(x => x.id === who);
+  const k = s ? `${s.id}:${s.look}:${art.cast?.length}` : `lidia:${!!art.portrait}`;
+  if (!avatars.has(k)) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 40;
+    paintAvatar(cv, s);
+    avatars.set(k, cv.toDataURL());
+  }
+  return `<img src="${avatars.get(k)}" alt=""${s ? ` style="background:hsl(${s.hue ?? 0},28%,22%)"` : ''}>`;
+}
+
 const hash = (str) => [...String(str)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 function drawAvatar(s) {
-  const cv = $('#talk-avatar'), g = cv.getContext('2d');
+  const cv = $('#talk-avatar');
+  cv.style.background = s ? `hsl(${s.hue ?? 0},28%,22%)` : '';
+  paintAvatar(cv, s);
+}
+function paintAvatar(cv, s) {
+  const g = cv.getContext('2d');
   g.imageSmoothingEnabled = false;
   g.clearRect(0, 0, 40, 40);
-  cv.style.background = s ? `hsl(${s.hue ?? 0},28%,22%)` : '';
   if (!s) {
     const p = art.portrait; if (!p) return;
     const side = Math.round(p.width * 0.62);
