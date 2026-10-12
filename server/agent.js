@@ -82,7 +82,7 @@ export async function oneShot({ system, prompt, model }) {
  * Lidia's own conversation: a persistent session whose only tools are the
  * fortress controls (no shell, no files). Resumed every time Jav talks to her.
  */
-export async function runCaptain({ prompt, resume, model, system, server, toolNames, onTool }) {
+export async function runCaptain({ prompt, resume, model, system, server, extraServers = {}, onTool, onInit }) {
   if (MOCK) return mockCaptain({ prompt, onTool });
   const q = query({
     prompt,
@@ -90,20 +90,23 @@ export async function runCaptain({ prompt, resume, model, system, server, toolNa
       resume: resume || undefined,
       model: model || undefined,
       systemPrompt: system,
-      tools: [],
-      mcpServers: { fortress: server },
-      allowedTools: toolNames.map(n => `mcp__fortress__${n}`),
-      permissionMode: 'dontAsk',
-      settingSources: [],
-      maxTurns: 12,
+      tools: [],                                   // no shell, no files: she runs the place, agents do the hands-on work
+      mcpServers: { fortress: server, ...extraServers },
+      settingSources: ['user'],                    // loads your claude.ai connectors and user MCP servers
+      permissionMode: 'default',
+      // Every connector (calendar, mail, …) is hers to use when Jav asks; nothing else.
+      canUseTool: async (name, input) => name.startsWith('mcp__')
+        ? { behavior: 'allow', updatedInput: input }
+        : { behavior: 'deny', message: 'The captain only uses fortress tools and connectors. Assign an agent for files or shell work.' },
+      maxTurns: 16,
       ...CLAUDE_PATH,
     },
   });
   const out = { text: '', costUsd: 0, sessionId: resume };
   for await (const m of q) {
-    if (m.type === 'system' && m.subtype === 'init') out.sessionId = m.session_id;
+    if (m.type === 'system' && m.subtype === 'init') { out.sessionId = m.session_id; onInit?.(m); }
     else if (m.type === 'assistant') {
-      for (const b of m.message?.content || []) if (b.type === 'tool_use') onTool?.(b.name.replace('mcp__fortress__', ''), b.input);
+      for (const b of m.message?.content || []) if (b.type === 'tool_use') onTool?.(b.name, b.input);
     } else if (m.type === 'result') {
       out.text = m.result || out.text;
       out.costUsd = m.total_cost_usd || 0;
@@ -156,7 +159,7 @@ async function mockOneShot(prompt) {
 async function mockCaptain({ prompt, onTool }) {
   await sleep(600);
   const call = async (name, args) => {
-    onTool?.(name, args);
+    onTool?.(`mcp__fortress__${name}`, args);
     return mockTools[name]?.(args);
   };
   const text = String(prompt).split('Jav says:').pop().trim();

@@ -3,6 +3,7 @@ import { loadArt } from './assets.js';
 import * as game from './game.js';
 import * as voice from './voice.js';
 import * as talk from './talk.js';
+import { rich, copyBtn, bindCopy } from './rich.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -271,8 +272,12 @@ function refreshSession() {
 
 const ROLE = { jav: 'Jav', lidia: 'Lidia', claude: 'Dweller', tool: 'Tool', system: 'System' };
 function renderLog(el, log) {
+  // Only rebuild when something new arrived, so text selection and COPIED states survive refreshes.
+  const key = `${log.length}:${log[log.length - 1]?.ts || 0}`;
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  el.innerHTML = log.map(e => `<div class="msg m-${e.role}"><span class="who">${ROLE[e.role] || e.role}${e.tool ? ` · ${esc(e.tool)}` : ''}</span><div>${esc(e.text)}</div></div>`).join('')
+  el.innerHTML = log.map(e => `<div class="msg m-${esc(e.role)}"><span class="who">${ROLE[e.role] || esc(e.role)}${e.tool ? ` · ${esc(e.tool)}` : ''}${e.role === 'tool' ? '' : copyBtn(e.text)}</span><div class="msg-body">${rich(e.text)}</div></div>`).join('')
     || '<p class="muted">No activity yet. Give this dweller something to do.</p>';
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
@@ -346,7 +351,8 @@ function mountConnectors() {
   $('#panel-title').textContent = 'Armory';
   body.innerHTML = `
     <p class="muted">Connectors are MCP servers. Every enabled connector is available to every dweller.</p>
-    <h4>Connected</h4><div id="c-list"></div>
+    <h4>Live on this device</h4><div id="c-live"></div>
+    <h4>Added here</h4><div id="c-list"></div>
     <h4>Quick add</h4><div id="c-catalog" class="grid"></div>
     <h4>Find any app</h4>
     <form id="c-search" class="row"><input id="c-q" placeholder="Search the MCP registry: slack, gmail, figma…"><button>Search</button></form>
@@ -385,7 +391,19 @@ async function addConnector(c, token) {
   try { await api('POST', '/api/connectors', { ...c, token: token || undefined }); toast(`${c.label || c.name} connected`); }
   catch (err) { toast(err.message); }
 }
+const prettyConn = (n) => n.replace(/^plugin:[^:]+:/, '').replace(/^claude[._ ]ai[ _-]?/i, '').replace(/[_-]+/g, ' ');
 function refreshConnectors() {
+  const live = Object.entries(state.liveConnectors || {});
+  const by = (st) => live.filter(([, v]) => v.status === st);
+  const seen = new Set();
+  const uniq = (arr) => arr.filter(([n]) => { const k = prettyConn(n).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  const ok = uniq(by('connected')), auth = uniq(by('needs-auth')), bad = uniq(by('failed'));
+  $('#c-live').innerHTML = !live.length
+    ? '<p class="muted">Nothing reported yet. Text Lidia or start an agent once and the apps from your Claude account show up here.</p>'
+    : `${ok.map(([n, v]) => `<div class="card"><div><b>${esc(prettyConn(n))}</b> <span class="chip st-done">connected</span><div class="muted small">${v.source === 'claudeai' ? 'from your claude.ai account' : esc(v.source || '')}</div></div></div>`).join('')}
+       ${auth.map(([n]) => `<div class="card"><div><b>${esc(prettyConn(n))}</b> <span class="chip st-needs_jav">needs sign-in</span><div class="muted small">Re-connect it at claude.ai → Settings → Connectors.</div></div></div>`).join('')}
+       ${bad.length ? `<details class="sub"><summary>${bad.length} could not connect</summary><p class="muted small">${bad.map(([n]) => esc(prettyConn(n))).join(', ')}</p></details>` : ''}
+       <p class="muted small">Lidia and every agent can use the connected apps. Add more at claude.ai → Settings → Connectors, or below.</p>`;
   $('#c-list').innerHTML = state.connectors.map(c => `<div class="card"><div><b>${esc(c.label)}</b> <span class="chip">${esc(c.type)}</span> ${c.hasToken ? '<span class="chip">🔑 token</span>' : ''}
       <div class="muted small">${esc(c.url || `${c.command} ${(c.args || []).join(' ')}`)}</div></div>
       <div class="row"><label class="inline"><input type="checkbox" data-tog="${c.id}" ${c.enabled ? 'checked' : ''}> on</label>
@@ -676,6 +694,7 @@ game.initGame($('#world'), {
 });
 game.focusOn('lidia');
 close();
+bindCopy();
 talk.initTalk({
   api, getState: () => state,
   openSession: (id) => openSession(id),

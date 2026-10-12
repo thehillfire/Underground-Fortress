@@ -60,7 +60,7 @@ app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
-  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources'];
+  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors'];
   for (const k of allowed) if (k in r.body) store.state.settings[k] = r.body[k];
   store.changed();
 }));

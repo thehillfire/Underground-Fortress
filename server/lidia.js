@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { oneShot, runCaptain, mockTools } from './agent.js';
 import { store } from './store.js';
+import { mcpServersFor } from './connectors.js';
 import * as sessions from './sessions.js';
 
 export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'];
@@ -138,12 +139,25 @@ ${reports}
 Jav says: ${text}`;
   const system = `${PERSONA}
 
-You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, create agents (each gets a room), change an agent's model, hand agents data, stop agents, and update your standing orders. Use them; don't just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
+You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, create agents (each gets a room), change an agent's model, hand agents data, stop agents, and update your standing orders.
+You can also use every app Jav has connected (tools named mcp__…: calendar, email, docs, CRM and the like). When Jav asks for something an app can do (put it on the calendar, check email, look something up), do it yourself right away with that tool and confirm what you did, with the specifics (date, time, title, link). If no connected tool can do it, say which app Jav needs to connect in the Armory. For long or hands-on work (code, files, research), assign an agent instead.
+Use your tools; never just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
   const out = await runCaptain({ prompt, resume: st.lidiaSessionId, model: st.settings.lidiaModel, system,
-    server: captainServer(), toolNames: TOOL_NAMES, onTool });
+    server: captainServer(), extraServers: mcpServersFor(), onTool, onInit: noteConnectors });
   if (out.sessionId) st.lidiaSessionId = out.sessionId;
   store.addSpend(out.costUsd, 'lidia');
   return out.text || 'Copy that.';
+}
+
+/** Remember which connectors Claude Code reported (including ones from Jav's claude.ai account). */
+export function noteConnectors(init) {
+  const live = {};
+  for (const m of init.mcp_servers || []) {
+    if (m.name === 'fortress') continue;
+    live[m.name] = { status: m.status, source: m.source || '', ts: Date.now() };
+  }
+  store.state.liveConnectors = live;
+  store.changed();
 }
 
 export function dataDir(cwd) { const d = path.join(cwd, '.fortress', 'data'); fs.mkdirSync(d, { recursive: true }); return d; }

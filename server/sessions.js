@@ -132,13 +132,15 @@ async function turn(s, text, from) {
       mcpServers: mcpServersFor(),
       appendSystem: `You are "${s.name}", a dweller in Jav's Underground Fortress. Your captain is Lidia; when you finish a turn she reads your final message and decides what you do next, or asks Jav. End every turn with a short, plain report: what you did, what is left, and any question that blocks you.${s.goal ? `\nYour standing goal: ${s.goal}` : ''}`,
       abortController: ac,
-      onInit: (m) => { if (m.session_id) s.sdkSessionId = m.session_id; store.changed(); },
+      onInit: (m) => { if (m.session_id) s.sdkSessionId = m.session_id; if (m.mcp_servers) lidia.noteConnectors(m); store.changed(); },
       onText: (t) => { log(s, 'claude', t); events.emit('bubble', { who: 'session', sessionId: s.id, text: t }); },
       onTool: (name, input) => {
         log(s, 'tool', summarizeInput(input), { tool: name });
         setStatus(s, 'working', activityFor(name));
       },
-      canUseTool: (toolName, input) => askPermission(s, toolName, input),
+      canUseTool: (toolName, input) => (toolName.startsWith('mcp__') && store.state.settings.autoApproveConnectors !== false
+        ? Promise.resolve({ behavior: 'allow', updatedInput: input })   // connectors Jav set up are trusted
+        : askPermission(s, toolName, input)),
     });
   } catch (err) {
     out = { result: `Error: ${err.message}`, isError: true, costUsd: 0 };
@@ -258,9 +260,11 @@ export async function talkToLidia(text) {
   const acts = [];
   let reply;
   try {
-    reply = await lidia.chat(text, (name, input) => {
-      if (name === 'fortress_status' || name === 'read_agent') return;
-      acts.push(`${name.replace(/_/g, ' ')}${input?.name ? ` → ${input.name}` : ''}`);
+    reply = await lidia.chat(text, (full, input) => {
+      const [, server = '', tool = full] = /^mcp__(.+?)__(.+)$/.exec(full) || [];
+      if (server === 'fortress' && (tool === 'fortress_status' || tool === 'read_agent')) return;
+      const app = server === 'fortress' ? '' : `${server.replace(/^claude_ai_/, '').replace(/[_-]+/g, ' ')}: `;
+      acts.push(`${app}${tool.replace(/_/g, ' ')}${input?.name ? ` → ${input.name}` : input?.summary ? ` → ${input.summary}` : ''}`);
     });
   } catch (err) { reply = `I can't reach the surface right now: ${err.message}`; }
   st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: reply, acts });

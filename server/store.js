@@ -16,11 +16,13 @@ const DEFAULT_STATE = {
     lidiaAutopilot: true,         // Lidia answers finished sessions automatically
     maxAutoTurns: 6,              // Lidia stops nudging after this many in a row
     skillSources: ['anthropics/skills'],
+    autoApproveConnectors: true,  // agents use connected apps without asking each time
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
   sessions: [],
   repos: [],
   connectors: [],
+  liveConnectors: {}, // what Claude Code actually loaded, incl. claude.ai connectors
   lidiaChat: [],     // Jav <-> Lidia conversation
   lidiaSessionId: null,
   reports: [],       // every report Lidia handled

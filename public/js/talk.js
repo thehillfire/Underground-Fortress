@@ -1,6 +1,7 @@
 // Talking to Lidia: a game-style dialogue scene (portrait + dialogue box + choices),
 // a reports board, and a texting view with her.
 import { art } from './assets.js';
+import { rich, copyBtn } from './rich.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -94,6 +95,9 @@ export function update(st, opt = {}) {
   ].sort((a, b) => a.ts - b.ts);
   if (opt.pending) items.push({ ts: Date.now(), html: bubble({ role: 'jav', text: opt.pending, ts: Date.now() }) });
   const el = $('#talk-bubbles');
+  const key = `${st.lidiaChat.length}:${(st.reports || []).length}:${waiting}:${opt.pending || ''}`;
+  if (el.dataset.key === key && !opt.force) return;
+  el.dataset.key = key;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   el.innerHTML = items.map(i => i.html).join('') +
     (waiting ? '<div class="typing"><span></span><span></span><span></span></div>' : '') +
@@ -103,7 +107,7 @@ export function update(st, opt = {}) {
 
 function bubble(m) {
   const acts = m.acts?.length ? `<div class="acts">${m.acts.map(a => `<span>${esc(a)}</span>`).join('')}</div>` : '';
-  return `<div class="bub ${m.role === 'jav' ? 'jav' : 'lidia'}">${esc(m.text)}${acts}<time>${time(m.ts)}</time></div>`;
+  return `<div class="bub ${m.role === 'jav' ? 'jav' : 'lidia'}"><div class="msg-body">${rich(m.text)}</div>${acts}<div class="bub-foot"><time>${time(m.ts)}</time>${copyBtn(m.text)}</div></div>`;
 }
 
 function renderReports(st) {

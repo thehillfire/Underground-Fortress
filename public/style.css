@@ -272,3 +272,18 @@ body.listening #mic, body.listening .mic-inline { background: #a3170f !important
 /* Keep the message box reachable without scrolling */
 #s-form { position: sticky; bottom: -20px; z-index: 2; background: var(--panel); padding: 8px 0 12px; margin-bottom: -12px; box-shadow: 0 -8px 12px var(--panel); }
 #panel.compact .log { min-height: 120px; }
+
+/* ---- copy + code blocks */
+.msg, .bub, .talk-text { -webkit-user-select: text; user-select: text; }
+.msg .who { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.copy-btn { min-height: 26px; padding: 2px 8px; font-size: 9px; background: #1c1b1f; border: 1px solid var(--line); box-shadow: none; color: var(--muted); }
+.copy-btn.done { color: var(--green); border-color: var(--green); }
+.bub-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.bub-foot time { margin: 0; }
+.codeblock { margin: 6px 0; border: 2px solid #2a2830; background: #08070a; }
+.code-head { display: flex; align-items: center; justify-content: space-between; padding: 3px 4px 3px 10px; background: #15141a; border-bottom: 1px solid #2a2830; }
+.code-head span { font-family: var(--pixel); font-size: 9px; color: var(--muted); text-transform: uppercase; }
+.codeblock pre { margin: 0; padding: 8px 10px; overflow-x: auto; white-space: pre; font-size: 17px; line-height: 1.15; color: #b9f0c8; background: transparent; }
+code.inline { background: #1c1b1f; padding: 0 4px; color: #ffd27a; font-size: 0.95em; }
+.msg-body { white-space: pre-wrap; word-break: break-word; }
+.msg-body .codeblock { white-space: normal; }
