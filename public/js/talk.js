@@ -221,7 +221,7 @@ export function update(st, opt = {}) {
   const reacts = items.map(i => Object.values(i.reactions || {}).join('')).join('|');
   const liveKey = (!s && live ? `${live.thinking.length}/${live.acts.length}/${live.text.length}` : '') + (!s ? reviewing.map(r => r.name + r.thinking.length).join() : '');
   const toolsKey = s ? s.log.length : '';
-  const key = `${peer}:${items.length}:${lastTs}:${reacts}:${working}:${card.length}:${s?.activity || ''}:${liveKey}:${toolsKey}:${[...openThoughts].join()}`;
+  const key = `${peer}:${items.length}:${lastTs}:${reacts}:${working}:${card.length}:${s?.activity || ''}:${s?.steps || 0}:${(s?.todos || []).map(t => t.status[0]).join('')}:${s?.lastShot?.name || ''}:${liveKey}:${toolsKey}:${[...openThoughts].join()}`;
   if (el.dataset.key === key && !opt.force) return;
   el.dataset.key = key;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -278,15 +278,25 @@ function lidiaLive() {
   </div></div>`;
 }
 
-/** An agent at work: typing dots, what it's doing, and its last few commands. */
+/** An agent at work: what it's doing, how long, its plan, its last commands and its latest screenshot. */
 function agentWorking(s) {
   const since = s.log.map(e => e.role).lastIndexOf('claude');
   const cmds = s.log.slice(since + 1).filter(e => e.role === 'tool').slice(-3);
-  return `<div class="them-row"><span class="ava">${avatarImg(s.id)}</span><div class="live">
-    <div class="live-head">${dots} ${esc(s.name)} is ${esc(s.activity || 'working')}…</div>
+  const mark = { completed: '✓', in_progress: '▶', pending: '○' };
+  const todos = (s.todos || []).filter(t => t.text);
+  const doneN = todos.filter(t => t.status === 'completed').length;
+  const shot = s.lastShot && Date.now() - s.lastShot.ts < 15 * 60000
+    ? `<a class="live-shot" href="/api/files/${encodeURIComponent(s.id)}/${encodeURIComponent(s.lastShot.name)}" target="_blank" rel="noopener"><img src="/api/files/${encodeURIComponent(s.id)}/${encodeURIComponent(s.lastShot.name)}" alt="Latest screenshot" loading="lazy"><small>latest screenshot</small></a>` : '';
+  return `<div class="them-row"><span class="ava">${avatarImg(s.id)}</span><div class="live working">
+    <div class="live-head">${dots} ${esc(s.name)} is ${esc(s.activity || 'working')}… <small data-since="${s.turnStart || Date.now()}">${secs(Date.now() - (s.turnStart || Date.now()))}</small>${s.steps ? `<small>${s.steps} step${s.steps === 1 ? '' : 's'}</small>` : ''}</div>
+    <div class="prog" role="progressbar" aria-label="${esc(s.name)} is working"><i></i></div>
+    ${todos.length ? `<div class="todos" aria-label="Plan">${todos.map(t => `<span class="${esc(t.status)}">${mark[t.status] || '○'} ${esc(t.text)}</span>`).join('')}<small>${doneN}/${todos.length} done</small></div>` : ''}
     ${cmds.length ? `<div class="cmds">${cmds.map((c, i) => `<span class="${i === cmds.length - 1 ? 'run' : 'ok'}">${esc(c.tool || 'tool')}: ${esc(String(c.text).slice(0, 80))}</span>`).join('')}</div>` : ''}
+    ${shot}
   </div></div>`;
 }
+// Tick the elapsed timers without re-rendering the thread.
+setInterval(() => document.querySelectorAll('#talk-bubbles [data-since]').forEach(el => { el.textContent = secs(Date.now() - Number(el.dataset.since)); }), 1000);
 
 function lidiaItems(st) {
   return [

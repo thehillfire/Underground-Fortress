@@ -13,9 +13,15 @@ const ok = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v :
 const fail = (m) => ({ content: [{ type: 'text', text: String(m) }], isError: true });
 const guard = (fn) => async (a) => { try { return ok(await fn(a)); } catch (e) { return fail(e.message); } };
 
-export function meshTools(sid) {
+export function meshTools(sid, show = {}) {
   const me = () => store.session(sid);
   return [
+    tool('share_screenshot', 'Send an image (a screenshot of your work, a rendered page, a chart) into Jav\'s chat. Give the path of a png/jpg/webp/gif file inside your workspace and a one-line caption. Use it after every meaningful step of visual work.',
+      { path: z.string(), caption: z.string().default('') },
+      guard(async ({ path, caption }) => show.share ? show.share(path, caption) : 'not available')),
+    tool('post_update', 'Send Jav a short progress note right now without ending your turn: what you finished and what you are doing next.',
+      { text: z.string() },
+      guard(async ({ text }) => { show.update?.(text); return 'Sent.'; })),
     tool('send_message', 'Message a teammate (by name) or Lidia. type: REQUEST (asks them to do something), QUERY (asks a question), NOTIFY (fyi), RESPONSE (answers), ESCALATE (to Lidia only, when blocked on something only she or Jav can decide). Keep it short and put the facts in it.',
       { to: z.string(), type: z.enum(bus.TYPES).default('NOTIFY'), topic: z.string().default(''), body: z.string(), reply_to: z.string().optional() },
       guard(async ({ to, type, topic, body, reply_to }) => { const t = String(to).toLowerCase() === 'jav' ? 'lidia' : to; const m = bus.publish({ from: sid, to: t, type, topic, body, corr: reply_to }); return `Sent ${m.type} ${m.id}.`; })),

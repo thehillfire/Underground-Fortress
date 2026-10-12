@@ -214,6 +214,8 @@ async function loadSafety() {
     <section><h4>YOUR DATA</h4>
       <p class="muted">Everything lives on this phone. Nothing is sent anywhere except to Claude when an agent works.</p>
       <a class="btn" href="/api/export" download>EXPORT EVERYTHING</a>
+      <details><summary>Fresh start…</summary><p class="muted small">Backs everything up on the phone (agents, rooms, chats, memory), then restarts with just Lidia. Your settings, connected apps, repos and skills stay. Type FRESH START.</p>
+      <form id="sf-fresh" class="row"><input id="sf-fconf" placeholder="FRESH START" aria-label="Type FRESH START to confirm"><button class="danger">START OVER</button></form></details>
       <details><summary>Erase everything…</summary><p class="muted small">Deletes all agents, chats, memory, tasks, messages and artifacts. The audit chain stays (already redacted). Type ERASE EVERYTHING.</p>
       <form id="sf-erase" class="row"><input id="sf-conf" placeholder="ERASE EVERYTHING" aria-label="Type ERASE EVERYTHING to confirm"><button class="danger">ERASE</button></form></details>
     </section>`;
@@ -231,6 +233,7 @@ async function loadSafety() {
       else loadSafety();
     } catch (err) { ctx.toast(err.message); }
   });
+  $d().querySelector('#sf-fresh')?.addEventListener('submit', async (e) => { e.preventDefault(); try { const r = await ctx.api('POST', '/api/fresh-start', { confirm: $d().querySelector('#sf-fconf').value }); ctx.toast(r.message); setTimeout(() => location.reload(), 4000); } catch (err) { ctx.toast(err.message); } });
   $d().querySelector('#sf-erase')?.addEventListener('submit', async (e) => { e.preventDefault(); try { await ctx.api('POST', '/api/erase', { confirm: $d().querySelector('#sf-conf').value }); ctx.toast('Erased.'); loadSafety(); } catch (err) { ctx.toast(err.message); } });
 }
 

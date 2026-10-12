@@ -16,11 +16,13 @@ import * as projects from './projects.js';
 import { reactTool, takeNotes, MEANING } from './reactions.js';
 import * as skills from './skills.js';
 import { captainScheduleTools, tz } from './schedule.js';
+import * as live from './live.js';
+import { DATA_DIR, WORKSPACES } from './store.js';
 import { intentBrief, enforceTier, addDirective, removeDirective, directives, record as recordDecision } from './intent.js';
 
 export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'];
 
-const PERSONA = `You are Lidia, captain of an underground survivor bunker in a zombie apocalypse. Every agent below you is a Claude Code session doing real work for Jav, the owner of the fortress. Agents only talk to you when they finish a turn and report. You are sharp, warm with Jav, decisive, and brief: you text like a person, 1-4 short sentences, no headings or bullet walls unless Jav asks for detail. You never invent facts about the work; check the roster or an agent's log before reporting on it.`;
+const PERSONA = `You are Lidia, captain of an underground survivor bunker in a zombie apocalypse. Every agent below you is a Claude Code session doing real work for Jav, the owner of the fortress. Agents only talk to you when they finish a turn and report. You are sharp, warm with Jav, decisive, and brief: you text like a person, 1-4 short sentences, no headings or bullet walls unless Jav asks for detail. You never invent facts about the work; check the roster or an agent's log before reporting on it. Jav can't see your screen or your agents': show him. When he asks what is going on, or when you put an agent to work, use show_agent (live status plus its latest screenshot) and show_jav for your own screenshots, and say specifically what you did and what happens next. A reaction emoji is never an answer to a question. When you do something that takes more than a few steps, say what you're doing as you go.`;
 
 function extractJson(text) {
   const start = text.indexOf('{');
@@ -213,6 +215,27 @@ const TOOLS = [
       store.state.preferences = (store.state.preferences || []).filter(p => !p.text.toLowerCase().includes(match.toLowerCase()));
       store.changed();
       return ok(`Forgot ${before - store.state.preferences.length} preference(s).`);
+    }),
+  tool('show_jav', "Send Jav an image right now: a screenshot, chart or rendered page. Path of a png/jpg/webp/gif under the workspaces, the data folder or /tmp, and a one-line caption.",
+    { path: z.string(), caption: z.string().default('') },
+    async ({ path: p, caption }) => {
+      try {
+        const abs = path.resolve(p);
+        if (![WORKSPACES, DATA_DIR, '/tmp'].some(r => abs.startsWith(path.resolve(r) + path.sep))) return fail('That image is outside the fortress folders.');
+        const meta = live.copyIn(sessions.lidiaUploadDir(), abs);
+        store.state.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: caption, files: [meta], shot: true }); store.changed();
+        return ok('Sent to Jav.');
+      } catch (e) { return fail(e.message); }
+    }),
+  tool('show_agent', "Show Jav what an agent is doing right now: posts its live status and its latest screenshot into your chat. Use it whenever Jav asks about an agent, and when you hand work to one. If it has no screenshot, say so honestly.",
+    { name: z.string() },
+    async ({ name }) => {
+      const s = find(name); if (!s) return fail(`No agent named ${name}`);
+      const text = `${s.name}${s.status === 'working' ? '' : ` (${s.status})`}\n${live.statusText(s)}`;
+      const files = [];
+      if (s.lastShot) { try { files.push(live.copyIn(sessions.lidiaUploadDir(), path.join(sessions.uploadDir(s), s.lastShot.name))); } catch {} }
+      store.state.lidiaChat.push({ ts: Date.now(), role: 'lidia', text, ...(files.length ? { files, shot: true } : {}) }); store.changed();
+      return ok(`${text}\n${files.length ? '(screenshot attached)' : '(no screenshot from this agent yet)'}`);
     }),
   tool('add_directive', "Record a standing directive: a blanket permission or rule from Jav ('you can always download free assets', 'never email anyone without asking'). You then follow it without asking again. Directives can NEVER authorize spending money; those are refused.",
     { text: z.string() },

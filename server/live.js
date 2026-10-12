@@ -49,7 +49,8 @@ export function copyIn(dir, src) {
   const ext = path.extname(p).slice(1).toLowerCase();
   const name = `${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}_${crypto.randomBytes(2).toString('hex')}_${path.basename(p).replace(/[^\w.\-]+/g, '_').slice(0, 60)}`;
   fs.copyFileSync(p, path.join(dir, name));
-  return { name, original: path.basename(p), type: MIME[ext] || 'image/png', size: st.size, ts: Date.now() };
+  const sha = crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex');
+  return { name, original: path.basename(p), type: MIME[ext] || 'image/png', size: st.size, ts: Date.now(), sha };
 }
 
 /** Save base64 image data (from a screenshot tool's result) into the chat's upload folder. */
