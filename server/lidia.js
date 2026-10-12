@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
-import { oneShot, runCaptain, mockTools } from './agent.js';
+import { oneShot, runCaptain, runReview, mockTools } from './agent.js';
 import { store, SETTINGS_KEYS, PERMISSION_MODES, checkSettings } from './store.js';
 import * as repos from './repos.js';
 import { mcpServersFor } from './connectors.js';
@@ -28,13 +28,24 @@ function extractJson(text) {
   try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
 }
 
+/** Jav's own recent words (to Lidia and to agents) and how he reacted: the trend she is supposed to follow. */
+function javWords(n = 24) {
+  const st = store.state, out = [];
+  for (const m of st.lidiaChat) if (m.role === 'jav' && m.text) out.push({ ts: m.ts, where: 'to you', text: m.text });
+  for (const s of st.sessions) for (const e of s.log) if (e.role === 'jav' && !e.goal && e.text && !/^(Allowed|Denied) /.test(e.text)) out.push({ ts: e.ts, where: `to ${s.name}`, text: e.text });
+  const words = out.sort((a, b) => a.ts - b.ts).slice(-n).map(x => `- [${x.where}] ${String(x.text).replace(/\s+/g, ' ').slice(0, 220)}`);
+  const reacts = st.lidiaChat.filter(m => m.role !== 'jav' && m.reactions?.jav).slice(-8)
+    .map(m => `- Jav reacted ${m.reactions.jav} to: "${String(m.text).replace(/\s+/g, ' ').slice(0, 100)}"`);
+  return [...words, ...reacts].join('\n') || '(nothing yet)';
+}
+
 function briefing() {
   const st = store.state;
   const precedents = st.precedents.slice(-15)
     .map(p => `- Q: ${p.question}\n  Jav: ${p.answer}`).join('\n') || '(none yet)';
-  return `STANDING ORDERS FROM JAV:\n${st.standingOrders}\n\nPAST ANSWERS FROM JAV (precedents):\n${precedents}`;
+  const prefs = (st.preferences || []).slice(-30).map(p => `- ${p.text}`).join('\n') || '(none yet)';
+  return `STANDING ORDERS FROM JAV:\n${st.standingOrders}\n\nTHINGS YOU HAVE LEARNED ABOUT HOW JAV LIKES THINGS DONE:\n${prefs}\n\nPAST ANSWERS FROM JAV (precedents):\n${precedents}\n\nJAV'S RECENT WORDS AND REACTIONS (his style and priorities; follow the trend when you decide):\n${javWords()}`;
 }
-
 function transcript(s, n = 14) {
   return s.log.slice(-n).map(e => `[${e.role}${e.tool ? ':' + e.tool : ''}] ${String(e.text).slice(0, 600)}`).join('\n');
 }
@@ -71,8 +82,13 @@ const TOOLS = [
     { name: z.string(), text: z.string() },
     async ({ name, text }) => {
       const s = find(name); if (!s) return fail(`No agent named ${name}`);
-      sessions.send(s.id, text, s.pendingQuestion ? 'jav-via-lidia' : 'lidia');
-      return ok(`Sent to ${s.name}.`);
+      const since = Date.now();
+      const how = sessions.send(s.id, text, s.pendingQuestion ? 'jav-via-lidia' : 'lidia');
+      if (how === 'queued') return ok(`${s.name} is mid-task. Your message is queued and will be delivered the moment its current turn ends. It has NOT started on it yet; don't say it has.`);
+      if (!how) return fail(`The message to ${s.name} was not delivered (empty?).`);
+      const life = await sessions.confirmAlive(s.id, since);
+      return life.ok === false ? fail(`Delivered to ${s.name}, but it ${life.detail}. Do not tell Jav it is working on it; fix it or tell him.`)
+        : ok(`Delivered to ${s.name}: it ${life.detail}.`);
     }),
   tool('create_project', 'Open a new project room. A project holds any number of agents who share its folder (or repository). Put agents whose work belongs together (e.g. lead scouting and lead outreach) in one project.',
     { name: z.string(), goal: z.string().optional(), roomType: z.enum(projects.ROOM_TYPES).optional(),
@@ -83,13 +99,18 @@ const TOOLS = [
       const p = projects.createProject({ name, goal, roomType, repoId: r?.id || null, by: 'lidia' });
       return ok(`Project room "${p.name}" is open${r ? ` on ${r.name}` : ''}.`);
     }),
-  tool('create_agent', 'Move a new agent (a fresh Claude Code session) into a project room. Names an existing project, or opens it if it does not exist yet; without a project the agent gets a room of its own.',
-    { name: z.string(), goal: z.string(), project: z.string().optional(), model: z.string().optional(),
+  tool('create_agent', 'Move a new agent (a fresh Claude Code session) into a project room and start it. Check fortress_status first: reuse an existing agent whose project fits instead of making duplicates. The goal is its whole brief, so make it complete: the goal, the context, what "done" looks like, where files go, and who it hands off to. The result tells you whether it really started; only say it is working if it says so.',
+    { name: z.string(), goal: z.string().describe('the complete brief'), project: z.string().optional(), model: z.string().optional(),
       repo: z.string().optional().describe('only for a brand-new project: a connected repository to work on') },
     async ({ name, goal, project, model, repo }) => {
       const r = repo ? store.state.repos.find(x => x.name.toLowerCase().includes(repo.toLowerCase())) : null;
+      const since = Date.now();
       const s = sessions.create({ name, goal, project, model: model || '', repoId: r?.id || null, by: 'lidia' });
-      return ok(`${s.name} moved into ${projects.project(s.projectId).name} and started on: ${goal}`);
+      const where = projects.project(s.projectId).name;
+      if (!String(goal || '').trim()) return ok(`${s.name} is in ${where} but has no task yet, so it is idle. Give it one with message_agent.`);
+      const life = await sessions.confirmAlive(s.id, since);
+      return life.ok === false ? fail(`${s.name} was created in ${where} but it ${life.detail}. It is NOT working. Do not tell Jav it is; fix it or tell him.`)
+        : ok(`${s.name} is in ${where}: it ${life.detail}.`);
     }),
   tool('move_agent', "Move an agent into another project room (it keeps its memory and files). Open the project first with create_project if it doesn't exist.",
     { name: z.string(), project: z.string() },
@@ -172,6 +193,22 @@ const TOOLS = [
     { names: z.array(z.string()) },
     async ({ names }) => ok(await (names.length === 1 && names[0] === 'starter' ? skills.installStarter() : skills.installByName(names)))),
   ...captainScheduleTools((n) => find(n)),
+  tool('remember_preference', "Remember something about how Jav likes things done (a rule, a preference, a correction, how he wants agents to behave). Use it whenever he says 'always…', 'never…', 'I prefer…', or corrects you. You read these every time you review an agent.",
+    { note: z.string() },
+    async ({ note }) => {
+      const list = (store.state.preferences ||= []);
+      if (!list.some(p => p.text.toLowerCase() === note.trim().toLowerCase())) list.push({ text: note.trim().slice(0, 300), ts: Date.now() });
+      if (list.length > 60) list.shift();
+      store.changed();
+      return ok(`Remembered: ${note.trim().slice(0, 120)}`);
+    }),
+  tool('forget_preference', 'Forget a remembered preference (match any part of its text).', { match: z.string() },
+    async ({ match }) => {
+      const before = (store.state.preferences || []).length;
+      store.state.preferences = (store.state.preferences || []).filter(p => !p.text.toLowerCase().includes(match.toLowerCase()));
+      store.changed();
+      return ok(`Forgot ${before - store.state.preferences.length} preference(s).`);
+    }),
   tool('set_standing_orders', 'Replace the standing orders you use to judge reports. Only when Jav changes policy.', { text: z.string() },
     async ({ text }) => { store.state.standingOrders = text; store.changed(); return ok('Standing orders updated.'); }),
 ];
@@ -185,34 +222,103 @@ const captainServer = () => (server ||= createSdkMcpServer({ name: 'fortress', v
  * An agent just finished a turn and reports. Decide: continue (with an instruction),
  * done, or escalate to Jav (agent turns red with "!").
  */
-export async function review(s, result) {
+export async function review(s, result, live = {}) {
+  const st = store.state;
+  const mates = st.sessions.filter(x => x.id !== s.id)
+    .map(x => `- ${x.name} (${projects.project(x.projectId)?.name || 'no project'}${x.projectId === s.projectId ? ', same project' : ''}): ${x.status}${x.goal ? `; goal: ${x.goal.slice(0, 100)}` : ''}`).join('\n') || '(nobody else)';
   const prompt = `${briefing()}
+
+OTHER AGENTS YOU COULD HAND WORK TO:
+${mates}
 
 AGENT REPORTING: "${s.name}" (project: ${projects.project(s.projectId)?.name || 'none'})
 GOAL: ${s.goal || '(no explicit goal; follow Jav\'s latest message)'}
 AUTOMATIC NUDGES SO FAR IN A ROW: ${s.autoTurns}
 
-RECENT TRANSCRIPT:
-${transcript(s)}
+RECENT TRANSCRIPT (including its tool calls):
+${transcript(s, 20)}
 
-FINAL REPORT OF THIS TURN:
+THE AGENT'S FINAL MESSAGE THIS TURN:
 ${String(result).slice(0, 4000)}
 
-Decide what this agent does next. Reply with ONLY a JSON object, one of:
-{"decision":"continue","instruction":"<exact next instruction to the agent>","note":"<5-12 word summary for Jav>","health":"on_track|stalled"}
-{"decision":"done","note":"<5-12 word summary for Jav>"}
-{"decision":"escalate","question":"<the specific question Jav must answer>","note":"<5-12 word summary>"}
+Review this like a sharp manager. Think it through in this order:
+1. WHAT HAPPENED: did it really do the work (concrete evidence in its tool calls and message), is it claiming more than it shows, did it hit an error?
+2. IS IT ASKING YOU ANYTHING? ("should I continue?", "which option?", "want me to…?", "let me know"). If so, that question needs an answer.
+3. DECIDE.
 
-Set "health" to "stalled" when the agent is going in circles, repeating failures, or not making real progress; a fellow owner will then be sent to help.
-Rules: choose "continue" only when the next step clearly follows from the goal, standing orders or precedents. Choose "done" when the goal is met. Choose "escalate" whenever the agent asks a question you cannot answer from the orders/precedents, the work is ambiguous, risky, or needs Jav's taste or credentials.`;
-  const { text, costUsd } = await oneShot({ system: PERSONA, prompt, model: store.state.settings.lidiaModel });
+Reply with ONLY a JSON object:
+{"state":"finished|asked_a_question|blocked|partial|failed",
+ "agent_asked":"<the question it put to you, or empty>",
+ "evidence":"<what shows the work is real, or what is missing>",
+ "reasoning":"<your thinking, 2-4 sentences: what you saw, what Jav would want, why this decision>",
+ "decision":"continue|done|escalate",
+ "instruction":"<for continue: your direct reply or next instruction to the agent. If it asked a question, answer it first>",
+ "delegate":[{"agent":"<a name from the list above>","instruction":"<what that agent should do, with the context from this agent's work>"}],
+ "message_to_jav":"<for escalate: text Jav in your own voice, see the rules>",
+ "note":"<5-12 words for the ticker>",
+ "health":"on_track|stalled"}
+
+Rules:
+- If the agent asks something you can answer from the orders, precedents, learned preferences, Jav's recent words, or plain good sense: decision "continue", and the instruction ANSWERS it. Never bounce routine questions ("should I continue?", "want me to run the tests?") to Jav.
+- Do not make the agent prove what the fortress can check for you. If it says it is finished and the claim is plausible and consistent with its tool calls (it wrote the file, ran the tests, used the app), choose "done": an inspector reads the workspace before the agent is stood down and sends it back with specifics if the claim is false. Only send it back yourself ("continue") when the claim is vague, contradicts the evidence, or there are no tool calls at all for work that needs them.
+- "escalate" only for: taste or direction you truly cannot infer, money, credentials, destructive or irreversible choices, scope changes, or an agent that is finished and you have no idea where to take it next. message_to_jav must say what the agent did, what it asked or where it is stuck, why you can't decide, and your 2-3 options with the one you would pick. Short and plain, like a text.
+- Use "delegate" whenever a teammate is waiting on this agent's output (leads found -> the outreach agent), even when the decision is "done". The instruction must carry the context: what was produced and where it is. Never delegate to the reporting agent itself.
+- Set health "stalled" when it is going in circles or repeating failures; a fellow owner will be sent to help.`;
+  const { text, costUsd, thinking } = await oneShot({ system: PERSONA, prompt, model: st.settings.lidiaModel, onThinking: live.onThinking });
   store.addSpend(costUsd, 'lidia');
   const d = extractJson(text);
   if (!d || !['continue', 'done', 'escalate'].includes(d.decision)) {
-    return { decision: 'escalate', question: 'I could not make sense of this report. Please take a look.', note: 'unclear report' };
+    return { decision: 'escalate', note: 'unclear report', reasoning: 'I could not make sense of my own review of this report.',
+      message_to_jav: `${s.name} reported, but I couldn't work out what it means. Its last message: "${String(result).replace(/\s+/g, ' ').slice(0, 240)}". Can you tell me what you want next?` };
   }
-  if (d.decision === 'continue' && !d.instruction) d.decision = 'escalate';
+  d.thinking = thinking || '';
+  if (d.decision === 'continue' && !String(d.instruction || '').trim()) {
+    d.decision = 'escalate';
+    d.message_to_jav ||= `${s.name} reported and I couldn't work out its next step from your orders. Its last message: "${String(result).replace(/\s+/g, ' ').slice(0, 240)}". Where should it go from here?`;
+  }
+  if (d.decision === 'done') await verifyDone(s, d, result);
   return d;
+}
+
+/**
+ * Before standing an agent down: is "done" true? A read-only check of its workspace and its tool calls.
+ * Fails the claim (back to work, with the gaps) or confirms it. Skipped in settings or when it can't be judged.
+ */
+async function verifyDone(s, d, result) {
+  if (store.state.settings.lidiaVerify === false) return;
+  const tools = s.log.filter(e => e.role === 'tool').slice(-25).map(e => `- ${e.tool}: ${String(e.text).replace(/\s+/g, ' ').slice(0, 140)}`).join('\n') || '(no tool calls recorded)';
+  const system = `You are Lidia's inspector in Jav's fortress. An agent claims its job is done. You can read files in its workspace and look things up on the web; you cannot change anything. Be fair but do not take its word for it.`;
+  const prompt = `Agent "${s.name}" says it is finished.
+GOAL: ${s.goal || '(follow Jav\'s latest message)'}
+ITS FINAL MESSAGE: ${String(result).slice(0, 2500)}
+
+ITS RECENT TOOL CALLS:
+${tools}
+
+Check the claim against the goal. Judge from BOTH the workspace files and the tool calls above. Do not demand files for work done through connected apps (calendar, email, CRM, documents) when the tool calls show it happened. The tool call list shows what was requested, NOT what came back, so never fail a claim just because search or app results are not visible there; judge whether the files or outcomes are specific, consistent and plausible, and fail it only for something concretely wrong (missing, empty, too few, placeholder or fake-looking content, contradicting the claim). Fail only when the CORE requirement of the goal is not met: judge against what the goal actually asked for, not what you would have liked. Do not fail for polish, taste, extra detail the goal never requested, or things you merely cannot see.
+Reply with ONLY JSON: {"verified":true|false,"gaps":["<specific thing that is missing or wrong>"],"summary":"<one sentence>"}`;
+  let v = null;
+  try {
+    const out = await runReview({ cwd: sessions.cwdFor(s), prompt, system, model: store.state.settings.lidiaModel });
+    store.addSpend(out.costUsd, 'lidia');
+    v = extractJson(out.text);
+  } catch { return; }     // couldn't check: take the review as it stands
+  if (!v || typeof v.verified !== 'boolean') return;
+  d.verification = { verified: v.verified, gaps: v.gaps || [], summary: v.summary || '' };
+  if (v.verified) { s.verifyFails = 0; return; }
+  s.verifyFails = (s.verifyFails || 0) + 1;
+  const trim = (x) => String(x).replace(/[.\s]+$/, '');
+  const gaps = (v.gaps || []).filter(Boolean).map(trim);
+  d.delegate = [];   // never hand a teammate output that just failed inspection
+  if (s.verifyFails >= 3 || !gaps.length) {
+    d.decision = 'escalate';
+    d.message_to_jav = `${s.name} says it is done, but I checked and I'm not convinced${gaps.length ? `: ${gaps.join('; ')}` : ''}. I've sent it back ${s.verifyFails - 1} time${s.verifyFails === 2 ? '' : 's'} already. Do you want it to keep going, or is this good enough?`;
+  } else {
+    d.decision = 'continue';
+    d.instruction = `Not done yet. I checked your work and found: ${gaps.join('; ')}. Fix those, then show me proof (file paths, command output, or what the tool returned).`;
+    d.note = 'sent back: not really done';
+  }
+  d.reasoning = `${trim(d.reasoning || '')}. Then I checked the claim: ${trim(v.summary || 'gaps found')}.`.replace(/^\. /, '');
 }
 
 // ------------------------------------------------------------------ texting Jav
@@ -235,6 +341,8 @@ You act with Jav's authority over the fortress: you can set any agent's permissi
 Money is Jav's alone: you and the agents cannot spend, buy, pay or transfer, and you cannot approve the money gate. Anything like that waits for Jav's tap in the app.
 You can also use every app Jav has connected (tools named mcp__…: calendar, email, docs, CRM and the like). When Jav asks for something an app can do (put it on the calendar, check email, look something up), do it yourself right away with that tool and confirm what you did, with the specifics (date, time, title, link). If no connected tool can do it, say which app Jav needs to connect in the Armory. For long or hands-on work (code, files, research), assign an agent instead.
 TEXTING STYLE: this is a text thread on Jav's phone. React to every text from Jav with the react tool first, before anything else (${MEANING}), so he gets an instant answer. Then reply: lead with the one-line answer (the gist), add detail only if it matters. For a plain yes/no where the reaction says it all, a few words are enough.
+DELEGATION: you run the fortress; the agents do the hands-on work. When Jav asks for real work, give it to an agent: reuse one whose project fits (call fortress_status first and don't create duplicates), otherwise create one with a COMPLETE brief. After create_agent or message_agent, read the tool result: say an agent is working only if the result says it started. If it failed or hasn't started, say so plainly and fix it. Never say you created, sent, assigned or scheduled something unless you called the tool for it in this reply.
+LEARNING: when Jav states a preference or rule, or corrects you ("always…", "never…", "I prefer…"), save it with remember_preference. You read these when you review agents, together with his recent words, so follow the trend in how he communicates.
 Use your tools; never just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
   const out = await runCaptain({ prompt: promptWithFiles(prompt, saved, { inlineText: true }), resume: st.lidiaSessionId,
     model: st.settings.lidiaModel, effort: st.settings.lidiaEffort || undefined, system,
@@ -242,6 +350,12 @@ Use your tools; never just describe what you would do. When Jav asks how things 
   if (out.sessionId) st.lidiaSessionId = out.sessionId;
   store.addSpend(out.costUsd, 'lidia');
   return { text: out.text || '', thinking: out.thinking || '' };
+}
+
+/** A first-person claim of an action in Lidia's reply ("I've sent it to Scout"), or null. Used to catch claims with no tool call behind them. */
+export function claimsAction(text) {
+  const m = /\bI(?:'ve| have| just|'ll go ahead and)?\s*(?:now\s+)?(created|spun up|set up|assigned|delegated|sent|messaged|told|started|moved|scheduled|briefed|asked|put|handed|added|booked|kicked off)\b[^.\n]{0,80}/i.exec(String(text || ''));
+  return m ? m[0].trim() : null;
 }
 
 /** Remember which connectors Claude Code reported (including ones from Jav's claude.ai account). */

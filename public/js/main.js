@@ -50,6 +50,7 @@ function connect() {
     else if (m.type === 'visit') game.visit(m.from, m.to);
     else if (m.type === 'visit-end') game.visitEnd(m.from);
     else if (m.type === 'lidia-live') talk.setLive(m.started ? m : null);
+    else if (m.type === 'lidia-reviewing') talk.setReviewing(m.list);
     else if (m.type === 'notify') notifyJav(m);
     else if (m.type === 'alert') {
       const s = state?.sessions.find(x => x.id === m.sessionId);

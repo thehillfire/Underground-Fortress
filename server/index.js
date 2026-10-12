@@ -184,11 +184,12 @@ sessions.events.on('notify', ({ text, sessionId }) => {
   broadcast({ type: 'notify', title: 'Lidia', text: body, sessionId });
   if (!wss.clients.size) { try { system.termuxAction('notify', body); } catch {} }
 });
-for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end', 'lidia-live']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
+for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end', 'lidia-live', 'lidia-reviewing']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
 
 await ensureAssets();
 startUsagePolling();
 startScheduler(sessions.send);
 server.listen(PORT, HOST, () => {
+  sessions.recoverInterrupted();
   console.log(`\n  ⛏  Underground Fortress is open at http://${HOST}:${PORT}${MOCK ? '  (mock mode: no real Claude calls)' : ''}\n`);
 });

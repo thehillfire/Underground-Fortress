@@ -18,6 +18,7 @@ let peer = 'lidia';    // who the chat is with: 'lidia' or a session id
 let typing = null;     // typewriter timer
 let pending = null;    // { peer, text, ts } sent, not yet in state
 let live = null;       // Lidia mid-reply: { started, thinking, acts, text }
+let reviewing = [];    // agents whose reports Lidia is reviewing right now
 const openThoughts = new Set();   // which "Thought for…" blocks Jav expanded
 let attach = null;
 
@@ -68,6 +69,12 @@ export function draft(text) {
   box.value = box.value ? `${box.value} ${text}` : text;
   box.dispatchEvent(new Event('input'));
   box.focus();
+}
+
+/** The agents Lidia is reviewing right now, with her thinking. */
+export function setReviewing(list) {
+  reviewing = list || [];
+  if (currentPeer() === 'lidia') update(ctx.getState(), { force: true });
 }
 
 /** Lidia's live state while she works (null when she's done). */
@@ -206,13 +213,13 @@ export function update(st, opt = {}) {
   // Show the "Sending…" copy only until the real message is in the thread (no duplicate).
   const landed = mine && items.some(i => i.role === 'jav' && i.ts >= pending.ts - 5000 && (i.text === pending.text || i.files?.length));
   if (mine && !landed) items.push({ ts: Date.now(), role: 'jav', text: pending.text, sending: true });
-  const working = s ? s.status === 'working' : !!(mine || live);
+  const working = s ? s.status === 'working' : !!(mine || live || reviewing.length);
   const card = s ? actionCard(s) : '';
 
   const el = $('#talk-bubbles');
   const lastTs = items[items.length - 1]?.ts || 0;
   const reacts = items.map(i => Object.values(i.reactions || {}).join('')).join('|');
-  const liveKey = !s && live ? `${live.thinking.length}/${live.acts.length}/${live.text.length}` : '';
+  const liveKey = (!s && live ? `${live.thinking.length}/${live.acts.length}/${live.text.length}` : '') + (!s ? reviewing.map(r => r.name + r.thinking.length).join() : '');
   const toolsKey = s ? s.log.length : '';
   const key = `${peer}:${items.length}:${lastTs}:${reacts}:${working}:${card.length}:${s?.activity || ''}:${liveKey}:${toolsKey}:${[...openThoughts].join()}`;
   if (el.dataset.key === key && !opt.force) return;
@@ -220,7 +227,7 @@ export function update(st, opt = {}) {
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   const lastMine = items.map(i => i.role).lastIndexOf('jav');
   const seen = lastMine >= 0 && (working || items.slice(lastMine + 1).some(i => i.role === 'peer'));
-  el.innerHTML = thread(items, seen ? lastMine : -1) + card + (working ? (s ? agentWorking(s) : lidiaLive()) : '') +
+  el.innerHTML = thread(items, seen ? lastMine : -1) + card + (working ? (s ? agentWorking(s) : ((live || mine) ? lidiaLive() : '') + (reviewing.length ? lidiaReviewing() : '')) : '') +
     (items.length ? '' : `<div class="sys">${s ? `Say hi, send a photo, or give ${esc(s.name)} a job.` : 'Text her anything: “how is everyone?”, “spin up a researcher on sonnet”, “did the lead list finish?”'}</div>`);
   if (atBottom || opt.scroll || mine) el.scrollTop = el.scrollHeight;
   bindCard(s);
@@ -228,6 +235,31 @@ export function update(st, opt = {}) {
     const k = d.dataset.thought; openThoughts.has(k) ? openThoughts.delete(k) : openThoughts.add(k);
     update(ctx.getState(), { force: true });
   });
+}
+
+/** One of her reviews, as a row you can open to read why: what the agent asked, what she saw, what she told it. */
+function reviewRow(r) {
+  const k = `r${r.ts}`, open = openThoughts.has(k);
+  const verb = r.decision === 'done' ? 'stood down' : r.decision === 'escalate' ? 'needs you' : /^sent back/i.test(r.note || '') ? '' : 'sent back to work';
+  const bits = [];
+  if (r.asked) bits.push(`It asked: “${r.asked}”`);
+  if (r.reasoning) bits.push(r.reasoning);
+  if (r.evidence) bits.push(`Evidence: ${r.evidence}`);
+  if (r.verification) bits.push(`I checked the claim: ${r.verification.verified ? 'verified' : 'not verified'}${r.verification.summary ? `. ${r.verification.summary}` : ''}${r.verification.gaps?.length ? ` Gaps: ${r.verification.gaps.join('; ')}.` : ''}`);
+  if (r.decision === 'continue' && r.instruction) bits.push(`I told it: “${r.instruction}”`);
+  if (r.handed?.length) bits.push(`I handed work to: ${r.handed.join(', ')}`);
+  if (r.thinking) bits.push(`— my thinking —\n${r.thinking}`);
+  return `<button class="review d-${esc(r.decision)}" data-thought="${k}"><i class="rv-dot"></i><span><b>${esc(r.name)}</b> ${verb ? `${verb}${r.note ? `: ${esc(r.note)}` : ''}` : esc(r.note)}</span><em>${open ? '▾' : '▸'}</em></button>${open ? `<div class="think review-think">${esc(bits.join('\n\n'))}</div>` : ''}`;
+}
+
+/** Lidia going through an agent's report: who, and her thinking as it happens. */
+function lidiaReviewing() {
+  const names = reviewing.map(r => r.name).join(', ');
+  const think = (reviewing[reviewing.length - 1]?.thinking || '').trim();
+  return `<div class="them-row"><span class="ava">${avatarImg('lidia')}</span><div class="live">
+    <div class="live-head">${dots} Lidia is reviewing ${esc(names)}${reviewing.length > 1 ? ' reports' : "'s report"}…</div>
+    ${think ? `<div class="think live-think">${esc(think.slice(-500))}</div>` : ''}
+  </div></div>`;
 }
 
 const dots = '<span class="dots"><i></i><i></i><i></i></span>';
@@ -259,7 +291,7 @@ function agentWorking(s) {
 function lidiaItems(st) {
   return [
     ...st.lidiaChat.map(m => ({ ts: m.ts, role: m.role === 'jav' ? 'jav' : 'peer', text: m.text, files: m.files, acts: m.acts, reactions: m.reactions, owner: 'lidia', thinking: m.thinking, thoughtMs: m.thoughtMs })),
-    ...(st.reports || []).map(r => ({ ts: r.ts, role: 'sys', text: `${r.name} reported → ${r.decision === 'done' ? 'stood down' : r.decision === 'escalate' ? 'needs you' : 'kept going'}${r.note ? `: ${r.note}` : ''}` })),
+    ...(st.reports || []).map(r => (r.reasoning ? { ts: r.ts, role: 'review', r } : { ts: r.ts, role: 'sys', text: `${r.name} reported → ${r.decision === 'done' ? 'stood down' : r.decision === 'escalate' ? 'needs you' : 'kept going'}${r.note ? `: ${r.note}` : ''}` })),
   ].sort((a, b) => a.ts - b.ts).reduce((out, m) => {
     // A run of reports between texts collapses to the latest one, so the thread stays a conversation.
     const prev = out[out.length - 1];
@@ -280,6 +312,7 @@ function thread(items, seenIdx = -1) {
   items.forEach((m, i) => {
     if (m.ts - prevTs > 15 * 60e3) out += `<div class="stamp">${dayTime(m.ts)}</div>`;
     prevTs = m.ts;
+    if (m.role === 'review') { out += reviewRow(m.r); return; }
     if (m.role === 'sys') { out += `<div class="sys">${esc(m.text)}${m.more ? ` <small>+${m.more} earlier</small>` : ''}</div>`; return; }
     const next = items[i + 1];
     const tail = !next || next.role !== m.role || next.ts - m.ts > 5 * 60e3;
@@ -314,7 +347,10 @@ function actionCard(s) {
   if (s.status === 'error' && s.crash) return `<div class="card-ask money"><b>${esc(s.name)} crashed</b>
     <p>Claude couldn't run this turn:</p><pre>${esc(s.crash.reason)}</pre>
     <div class="row"><button class="primary" data-crash="retry">TRY AGAIN</button><button class="danger" data-crash="evict">EVICT</button></div></div>`;
+  if (s.interrupted) return `<div class="card-ask"><b>Interrupted</b><p>The fortress restarted while ${esc(s.name)} was ${esc(s.interrupted.while)}.${ctx.getState()?.settings?.resumeOnRestart === false ? '' : ' It picks up again in a moment.'}</p>
+    <div class="row"><button class="primary" data-crash="resume">RESUME NOW</button></div></div>`;
   if (s.pendingQuestion) return `<div class="card-ask"><b>Needs your call</b><p>${esc(s.pendingQuestion)}</p><small>Just text your answer. Lidia remembers it for next time.</small></div>`;
+  if (s.status === 'needs_jav') return `<div class="card-ask"><b>Flagged for you</b><p>${esc(s.name)} is marked as needing you, but no reason was recorded. Text it what to do next.</p></div>`;
   return '';
 }
 
@@ -324,7 +360,7 @@ function bindCard(s) {
   el.querySelectorAll('[data-allow]').forEach(b => b.onclick = () =>
     ctx.api('POST', `/api/sessions/${s.id}/permission`, { permissionId: s.pendingPermission?.id, allow: b.dataset.allow === '1' }).catch(e => ctx.toast(e.message)));
   el.querySelectorAll('[data-crash]').forEach(b => b.onclick = async () => {
-    if (b.dataset.crash === 'retry') return ctx.api('POST', `/api/sessions/${s.id}/retry`).catch(e => ctx.toast(e.message));
+    if (b.dataset.crash === 'retry' || b.dataset.crash === 'resume') return ctx.api('POST', `/api/sessions/${s.id}/retry`).catch(e => ctx.toast(e.message));
     if (confirm(`Evict ${s.name}? Their files stay on the phone.`)) { await ctx.api('DELETE', `/api/sessions/${s.id}`); openChat('lidia'); }
   });
 }
@@ -338,7 +374,7 @@ function renderHeader(st, s) {
     status.className = needsHelp(s) ? 'red' : s.status === 'working' ? 'green' : '';
   } else {
     const busy = st.sessions.filter(x => x.status === 'working').length;
-    status.textContent = live ? (live.text ? 'writing…' : 'thinking…') : pending?.peer === 'lidia' ? 'typing…' : busy ? `watching ${busy} at work` : 'on the bridge';
+    status.textContent = live ? (live.text ? 'writing…' : 'thinking…') : reviewing.length ? `reviewing ${reviewing.map(r => r.name).join(', ')}…` : pending?.peer === 'lidia' ? 'typing…' : busy ? `watching ${busy} at work` : 'on the bridge';
     status.className = 'green';
   }
   const nm = s ? s.name : 'Lidia';

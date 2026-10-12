@@ -76,8 +76,8 @@ export async function runTurn(opts) {
 }
 
 /** A single tool-less completion, used for Lidia's review of each report. */
-export async function oneShot({ system, prompt, model }) {
-  if (MOCK) return { text: await mockOneShot(prompt), costUsd: 0.004 };
+export async function oneShot({ system, prompt, model, onThinking }) {
+  if (MOCK) return { text: await mockOneShot(prompt, onThinking), costUsd: 0.004 };
   const q = query({
     prompt,
     options: {
@@ -88,17 +88,25 @@ export async function oneShot({ system, prompt, model }) {
       permissionMode: 'dontAsk',
       allowedTools: [],
       settingSources: [],
+      // Jav can watch her think while she reviews a report: stream it, summarized.
+      ...(onThinking ? { thinking: { type: 'adaptive', display: 'summarized' }, includePartialMessages: true } : {}),
       ...CLAUDE_PATH,
     },
   });
-  let text = '', costUsd = 0;
+  let text = '', costUsd = 0, thinking = '';
   for await (const m of q) {
     noteRateLimit(m);
-    if (m.type === 'assistant') {
-      for (const b of m.message?.content || []) if (b.type === 'text') text += b.text;
+    if (m.type === 'stream_event') {
+      const d = m.event?.type === 'content_block_delta' ? m.event.delta : null;
+      if (d?.type === 'thinking_delta' && d.thinking) { thinking += d.thinking; onThinking?.(d.thinking); }
+    } else if (m.type === 'assistant') {
+      for (const b of m.message?.content || []) {
+        if (b.type === 'text') text += b.text;
+        else if (b.type === 'thinking' && b.thinking && !thinking) { thinking += b.thinking; onThinking?.(b.thinking); }
+      }
     } else if (m.type === 'result') { if (m.result) text = m.result; costUsd = m.total_cost_usd || 0; }
   }
-  return { text: text.trim(), costUsd };
+  return { text: text.trim(), costUsd, thinking };
 }
 
 /**
@@ -219,14 +227,15 @@ async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, ab
   return { result, isError: false, costUsd: 0.01, sessionId };
 }
 
-async function mockOneShot(prompt) {
-  await sleep(700);
-  if (/Jav says:/.test(prompt)) return 'Understood, Jav. I will pass that down the shafts.';
+async function mockOneShot(prompt, onThinking) {
+  if (/Jav says:/.test(prompt)) { await sleep(700); return 'Understood, Jav. I will pass that down the shafts.'; }
+  for (const t of ['Reading the report. ', 'It did real work and then asked what to do next. ', 'Standing orders cover this, so I can answer it myself.']) { await sleep(300); onThinking?.(t); }
   const roll = Math.random();
-  if (roll < 0.25) return JSON.stringify({ decision: 'done', note: 'goal met' });
+  const base = { state: 'finished', agent_asked: '', evidence: 'Its tool calls show the files were written.', reasoning: 'The agent did the work and reported honestly. The next step follows from the goal and the standing orders.' };
+  if (roll < 0.25) return JSON.stringify({ ...base, decision: 'done', note: 'goal met' });
   return roll < 0.75
-    ? JSON.stringify({ decision: 'continue', instruction: 'Good work. Proceed with the next step and verify it.', note: 'routine progress', health: 'on_track' })
-    : JSON.stringify({ decision: 'escalate', question: 'Two approaches are open and neither is covered by standing orders. Which does Jav want?' });
+    ? JSON.stringify({ ...base, state: 'asked_a_question', agent_asked: 'Should I continue with the next part?', decision: 'continue', instruction: 'Yes, continue with the next part and verify it.', note: 'answered its question', health: 'on_track' })
+    : JSON.stringify({ ...base, state: 'blocked', decision: 'escalate', reasoning: 'Two approaches are open and neither is covered by the orders.', message_to_jav: 'It finished the first pass but doesn\'t know where to go next: A) polish what exists, B) start the next feature. I can\'t tell from your orders which you want. I\'d pick A.' });
 }
 
 // Mock captain: understands a few phrases and calls the real fortress tools, so the UI is testable offline.

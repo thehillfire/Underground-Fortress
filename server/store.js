@@ -21,6 +21,8 @@ const DEFAULT_STATE = {
     refineRounds: 2,              // improvement rounds after an agent hits its goal
     reviewEvery: 3,               // peer check-up every N reports
     reserveAt: 85,                // pause self-improvement when session/weekly usage passes this %
+    resumeOnRestart: true,        // agents cut off by a restart pick up where they were
+    lidiaVerify: true,            // Lidia checks that "done" is real before standing an agent down
     chatStyle: 'modern',          // texting look: modern | retro
     chatColor: '#b0222a',         // texting color (hex)
   },
@@ -39,6 +41,7 @@ const DEFAULT_STATE = {
   spend: { total: 0, lidia: 0, months: {} },
   plan: { name: 'Claude Max 20x', monthlyUsd: 200 },
   precedents: [],    // questions Jav answered, so Lidia learns
+  preferences: [],   // things Lidia learned about how Jav likes things done ({text, ts})
   feed: [],          // fortress-wide event ticker
 };
 
@@ -53,9 +56,19 @@ class Store extends EventEmitter {
       settings: { ...DEFAULT_STATE.settings, ...(loaded.settings || {}) },
       spend: { ...DEFAULT_STATE.spend, ...(loaded.spend || {}) } };
     if (!this.state.settings.skillSources.includes('obra/superpowers')) this.state.settings.skillSources.push('obra/superpowers');
-    // Anything that was mid-turn when the server stopped is idle now.
+    // What was in flight when the server stopped. Nothing may stay red or busy with no reason on screen:
+    // a request waiting on Jav died with the process, so the agent is marked "interrupted" (and resumed).
+    const lastAsk = (s) => [...s.log].reverse().find(e => ['jav', 'lidia', 'schedule', 'critic'].includes(e.role) && !e.goal)?.text || s.goal || '';
     for (const s of this.state.sessions) {
-      if (s.status === 'working' || s.status === 'reporting') s.status = 'idle';
+      const lostAsk = !!s.pendingPermission;
+      const orphan = s.status === 'needs_jav' && !s.pendingQuestion && !lostAsk;
+      if (s.status === 'working' || s.status === 'reporting' || lostAsk || orphan) {
+        s.interrupted = {
+          ts: Date.now(), text: lastAsk(s), wasReporting: s.status === 'reporting',
+          while: lostAsk ? `waiting for your OK to use ${s.pendingPermission.tool}` : s.status === 'reporting' ? 'waiting for Lidia to review its report' : s.status === 'working' ? 'working' : 'flagged for you',
+        };
+        s.status = 'idle'; s.activity = 'interrupted';
+      }
       s.pendingPermission = null;
     }
     this._timer = null;
@@ -112,7 +125,7 @@ class Store extends EventEmitter {
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
 // Settings Jav (and Lidia, on his behalf) may change.
-export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort', 'chatStyle', 'chatColor'];
+export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort', 'chatStyle', 'chatColor', 'resumeOnRestart', 'lidiaVerify'];
 
 /** Validate a settings change; returns an error message or null. */
 export function checkSettings(c) {

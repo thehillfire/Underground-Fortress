@@ -18,6 +18,8 @@ import { mcpServersFor } from './connectors.js';
 export const events = new EventEmitter(); // bubbles/animations for the browser
 
 const running = new Map();       // session id -> AbortController
+// Fortress tools that change something (a claim of action needs one of these, or a connected app, behind it).
+const WRITE_TOOLS = new Set(['create_agent', 'message_agent', 'move_agent', 'create_project', 'rename_project', 'provide_data', 'set_model', 'set_permission_mode', 'answer_permission', 'update_settings', 'schedule_task', 'install_skills', 'connect_repo', 'evict_agent', 'retry_agent', 'stop_agent', 'set_standing_orders', 'remember_preference', 'cancel_schedule']);
 const permissionWaiters = new Map(); // permission id -> resolve
 
 function log(s, role, text, extra = {}) {
@@ -26,7 +28,14 @@ function log(s, role, text, extra = {}) {
   store.changed();
 }
 
+/** What to show when an agent is flagged for Jav but nobody recorded why (never leave a red agent unexplained). */
+const orphanAsk = (s) => {
+  const last = [...s.log].reverse().find(e => e.role === 'claude')?.text;
+  return `${s.name} was flagged for you, but no question was recorded.${last ? ` Its last message: "${String(last).replace(/\s+/g, ' ').slice(0, 280)}"` : ''} Tell it what to do next.`;
+};
+
 function setStatus(s, status, activity = s.activity) {
+  if (status === 'needs_jav' && !String(s.pendingQuestion || '').trim() && !s.pendingPermission) s.pendingQuestion = orphanAsk(s);
   s.status = status;
   s.activity = activity;
   store.changed();
@@ -121,9 +130,32 @@ export function remove(sid) {
   store.changed();
 }
 
+/** After a restart: tell each cut-off agent, and (unless switched off) carry on where it was. */
+export function recoverInterrupted() {
+  const list = store.state.sessions.filter(s => s.interrupted);
+  const auto = store.state.settings.resumeOnRestart !== false;
+  list.forEach((s, i) => {
+    log(s, 'system', `The fortress restarted while ${s.name} was ${s.interrupted.while}.${auto ? ' Picking it back up.' : ''}`);
+    if (auto) setTimeout(() => resumeInterrupted(s), 4000 + i * 3000);   // staggered: no stampede on the plan limit
+  });
+}
+function resumeInterrupted(s) {
+  const info = s.interrupted;
+  if (!info || running.has(s.id)) return;
+  delete s.interrupted;
+  if (info.wasReporting) {                      // it had finished; Lidia hadn't decided yet
+    const last = [...s.log].reverse().find(e => e.role === 'claude');
+    return report(s, last?.text || '(the agent finished its turn)', false);
+  }
+  turn(s, s.sdkSessionId
+    ? 'The fortress restarted while you were working. Pick up exactly where you left off: check what is already done, then carry on.'
+    : (info.text || s.goal || 'Carry on.'), 'lidia');
+}
+
 /** Run the turn that crashed again. */
 export function retry(sid) {
   const s = store.session(sid);
+  if (s?.interrupted && !s.crash) { if (running.has(sid)) throw new Error(`${s.name} is already working`); resumeInterrupted(s); return { ok: true }; }
   if (!s?.crash) throw new Error('Nothing to retry');
   if (running.has(sid)) throw new Error(`${s.name} is already working`);
   const { text, from } = s.crash;
@@ -181,7 +213,7 @@ export const uploadDir = (s) => path.join(cwdFor(s), '.fortress', 'uploads');
 
 export function send(sid, text, from = 'jav', files = []) {
   const s = store.session(sid);
-  if (!s || (!text?.trim() && !files.length)) return;
+  if (!s || (!text?.trim() && !files.length)) return null;
   const saved = files.length ? saveUploads(uploadDir(s), files) : [];
   if (from === 'jav' || from === 'jav-via-lidia' || from === 'schedule') {
     s.autoTurns = 0;
@@ -197,13 +229,37 @@ export function send(sid, text, from = 'jav', files = []) {
     const role = from === 'jav-via-lidia' ? 'lidia' : from;
     log(s, role, text || '', { queued: true, ...(saved.length ? { files: fileMeta(saved) } : {}) });
     s.queue.push({ text, from, saved, logged: true });
-    return;
+    return 'queued';
   }
   turn(s, text, from, saved);
+  return 'started';
+}
+
+/** Wait for real signs of life from an agent just given work (or its crash), so Lidia only reports what happened. */
+export async function confirmAlive(sid, since, ms = 20000) {
+  const s = store.session(sid);
+  const t0 = Date.now();
+  while (s && Date.now() - t0 < ms) {
+    if (s.crash) return { ok: false, detail: `crashed on launch: ${s.crash.reason}` };
+    const sign = s.log.find(e => e.ts >= since && (e.role === 'claude' || e.role === 'tool'));
+    if (sign) {
+      // A failed launch often "speaks" once (the error text) and stops: give that a moment to show before believing it.
+      await new Promise(r => setTimeout(r, 1500));
+      const err = s.log.find(e => e.ts >= since && e.error);
+      const looksLikeError = sign.role === 'claude' && /^(there'?s an issue with|api error|invalid api key|credit balance|you'?ve hit your|rate limit|usage limit|error:)/i.test(String(sign.text).trim());
+      if (s.crash || s.status === 'error' || err || looksLikeError) return { ok: false, detail: `failed to run: ${String(s.crash?.reason || err?.text || sign.text).replace(/\s+/g, ' ').slice(0, 160)}` };
+    }
+    if (sign) return { ok: true, detail: sign.role === 'tool' ? `started (first action: ${sign.tool || 'tool'} ${String(sign.text).replace(/\s+/g, ' ').slice(0, 60)})` : `started ("${String(sign.text).replace(/\s+/g, ' ').slice(0, 80)}")` };
+    if (s.status === 'needs_jav') return { ok: true, detail: 'started, and is now waiting on an approval' };
+    if (s.status === 'error') return { ok: false, detail: 'stopped with an error' };
+    await new Promise(r => setTimeout(r, 400));
+  }
+  return { ok: null, detail: 'accepted the task but shows no activity yet (it may still be starting)' };
 }
 
 async function turn(s, text, from, saved = [], logged = false) {
   if (from === 'jav-via-lidia') from = 'lidia';
+  delete s.interrupted;
   if (logged) { const q = [...s.log].reverse().find(e => e.queued); if (q) delete q.queued; }
   else log(s, from, text || '', saved.length ? { files: fileMeta(saved) } : {});
   setStatus(s, 'working', 'thinking');
@@ -262,14 +318,14 @@ async function turn(s, text, from, saved = [], logged = false) {
   if (out.crashed) {
     const reason = (/stderr: ([^\n]+)/.exec(out.result)?.[1] || out.result.replace(/^Error: /, '')).slice(0, 300);
     s.crash = { ts: Date.now(), reason, text, from };
-    log(s, 'system', `Claude couldn't run this turn: ${reason}`);
+    log(s, 'system', `Claude couldn't run this turn: ${reason}`, { error: true });
     store.feed(`${s.name} crashed: ${reason}`, 'alert', s.id);
     setStatus(s, 'error', 'crashed');
     events.emit('alert', { sessionId: s.id, text: `Crashed: ${reason}` });
     return;   // a message from Jav retries; queued messages wait for that
   }
   delete s.crash;
-  if (out.isError) log(s, 'system', out.result);
+  if (out.isError) log(s, 'system', out.result, { error: true });
 
   // Jav's queued words outrank Lidia's review.
   if (s.queue.length) return drainQueue(s);
@@ -303,6 +359,17 @@ Your captain is Lidia. End every turn with a short report: what you did, your se
 }
 
 /** Walk up to Lidia and get told what to do next. */
+// Which agents Lidia is reviewing right now (the app shows "Lidia is reviewing X…" and her thinking).
+const reviewingNow = new Map();
+let reviewTimer = null;
+function emitReviewing() {
+  if (reviewTimer) return;
+  reviewTimer = setTimeout(() => {
+    reviewTimer = null;
+    events.emit('lidia-reviewing', { list: [...reviewingNow.entries()].map(([id, r]) => ({ id, name: r.name, since: r.since, thinking: r.thinking.slice(-600) })) });
+  }, 120);
+}
+
 async function report(s, result, isError) {
   const st = store.state;
   if (!st.settings.lidiaAutopilot) {
@@ -313,16 +380,35 @@ async function report(s, result, isError) {
   events.emit('report', { sessionId: s.id });
 
   let d;
-  if (s.autoTurns >= st.settings.maxAutoTurns) {
-    d = { decision: 'escalate', question: `I've pushed ${s.name} ${s.autoTurns} times in a row. Should they keep going, and in what direction?`, note: 'auto-turn limit reached' };
-  } else {
-    try { d = await lidia.review(s, isError ? `THE TURN FAILED: ${result}` : result); }
-    catch (err) { d = { decision: 'escalate', question: `I couldn't review this report (${err.message}).`, note: 'review failed' }; }
-  }
+  const rv = { name: s.name, since: Date.now(), thinking: '' };
+  reviewingNow.set(s.id, rv); emitReviewing();
+  try {
+    if (s.autoTurns >= st.settings.maxAutoTurns) {
+      d = { decision: 'escalate', note: 'auto-turn limit reached', reasoning: `I have already pushed ${s.name} ${s.autoTurns} times in a row without hearing from you.`,
+        message_to_jav: `I've pushed ${s.name} ${s.autoTurns} times in a row. Should it keep going, and in what direction?` };
+    } else {
+      try { d = await lidia.review(s, isError ? `THE TURN FAILED: ${result}` : result, { onThinking: (t) => { rv.thinking += t; emitReviewing(); } }); }
+      catch (err) { d = { decision: 'escalate', note: 'review failed', reasoning: `My review failed: ${err.message}`, message_to_jav: `${s.name} reported, but I couldn't review it (${err.message}). Can you look?` }; }
+    }
+  } finally { reviewingNow.delete(s.id); emitReviewing(); }
   // Jav may have spoken while Lidia was thinking.
   if (s.queue.length) return drainQueue(s);
 
-  store.report({ sessionId: s.id, name: s.name, decision: d.decision, note: d.note || '', instruction: d.instruction, question: d.question });
+  // Real delegation: work that this agent's output unlocks goes to a teammate, now.
+  const handed = [];
+  for (const t of (Array.isArray(d.delegate) ? d.delegate : []).slice(0, 3)) {
+    const mate = st.sessions.find(x => x.name.toLowerCase() === String(t?.agent || '').toLowerCase());
+    if (!mate || mate.id === s.id || !String(t.instruction || '').trim()) continue;
+    send(mate.id, `From Lidia, after ${s.name} reported: ${t.instruction}`, 'lidia');
+    handed.push(mate.name);
+    store.feed(`Lidia handed work from ${s.name} to ${mate.name}.`, 'lidia', mate.id);
+  }
+
+  store.report({
+    sessionId: s.id, name: s.name, decision: d.decision, note: d.note || '', instruction: d.instruction, question: d.question,
+    state: d.state, asked: d.agent_asked, evidence: d.evidence, reasoning: d.reasoning, verification: d.verification, handed,
+    message: d.message_to_jav, thinking: String(d.thinking || '').trim().slice(-3000),
+  });
   const cfg = st.settings;
   refreshSoon();
   // Near the plan limit: keep doing the work, but skip the optional extras (reviews, polish rounds).
@@ -355,12 +441,15 @@ async function report(s, result, isError) {
     store.feed(`${s.name} finished: ${d.note || 'goal complete'}`, 'done', s.id);
     setStatus(s, 'done', 'off duty');
   } else {
-    s.pendingQuestion = d.question;
-    log(s, 'lidia', `I need Jav on this: ${d.question}`);
-    store.feed(`${s.name} needs Jav: ${d.question}`, 'alert', s.id);
+    // Lidia can't decide: she tells Jav, in her own words, what happened and what she'd do.
+    const ask = String(d.message_to_jav || d.question || '').trim() || orphanAsk(s);
+    s.pendingQuestion = ask;
+    log(s, 'lidia', `I need Jav on this: ${ask}`);
+    st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: `${s.name} needs a call from you.\n\n${ask}`, about: s.id });
+    store.feed(`${s.name} needs Jav: ${ask}`, 'alert', s.id);
     setStatus(s, 'needs_jav', 'waiting for Jav');
-    events.emit('alert', { sessionId: s.id, text: d.question });
-    events.emit('notify', { text: `${s.name}: ${d.question}`, sessionId: s.id });   // Lidia is bringing Jav a decision
+    events.emit('alert', { sessionId: s.id, text: ask });
+    events.emit('notify', { text: `${s.name}: ${ask}`, sessionId: s.id });   // Lidia is bringing Jav a decision
   }
 }
 
@@ -503,7 +592,7 @@ export async function talkToLidia(text, files = []) {
   st.lidiaChat.push({ ts: Date.now(), role: 'jav', text, ...(saved.length ? { files: fileMeta(saved) } : {}) });
   store.changed();
   events.emit('bubble', { who: 'lidia-thinking' });
-  const acts = [];
+  const acts = [], called = [];
   // What Jav watches while she works: her thinking, the commands she runs, the reply as it's written.
   const live = { started: Date.now(), thinking: '', acts, text: '' };
   let liveTimer = null;
@@ -513,6 +602,7 @@ export async function talkToLidia(text, files = []) {
     ({ text: reply, thinking } = await lidia.chat(text, saved, (full, input) => {
       const [, server = '', tool = full] = /^mcp__(.+?)__(.+)$/.exec(full) || [];
       if (server === 'fortress' && ['fortress_status', 'read_agent', 'react'].includes(tool)) return;
+      called.push({ server, tool });
       const app = server === 'fortress' ? '' : `${server.replace(/^claude_ai_/, '').replace(/[_-]+/g, ' ')}: `;
       acts.push(`${app}${tool.replace(/_/g, ' ')}${input?.name ? ` → ${input.name}` : input?.summary ? ` → ${input.summary}` : ''}`);
       push();
@@ -524,6 +614,21 @@ export async function talkToLidia(text, files = []) {
   const asked = [...st.lidiaChat].reverse().find(m => m.role === 'jav');
   // A reaction can be the whole answer; otherwise a reply with nothing in it still says something.
   if (!reply.trim() && !acts.length && !asked?.reactions?.peer) reply = 'Copy that.';
+  // Claim check: she must not say she did something that no tool call did. One correction pass, then it stands.
+  const claim = lidia.claimsAction(reply);
+  const acted = called.some(c => c.server !== 'fortress' || WRITE_TOOLS.has(c.tool));
+  if (claim && !acted) {
+    try {
+      const again = await lidia.chat(`[Fortress check. Jav did not write this.] You just told Jav "${claim}", but no tool call of yours did that. Do it now with the right tool, or tell him plainly that it has not been done. Don't repeat your earlier text.`, [], (full, input) => {
+        const [, server = '', tool = full] = /^mcp__(.+?)__(.+)$/.exec(full) || [];
+        called.push({ server, tool });
+        if (server !== 'fortress' || WRITE_TOOLS.has(tool)) acts.push(`${tool.replace(/_/g, ' ')}${input?.name ? ` → ${input.name}` : ''}`);
+        push();
+      }, { onThinking: (t) => { live.thinking += t; push(); }, onText: (t, reset) => { live.text = reset ? '' : live.text + t; push(); } });
+      reply = again.text || `I said I'd do that, but I haven't actually done it. Tell me to go ahead and I will.`;
+      thinking = `${thinking}\n${again.thinking || ''}`.trim();
+    } catch { reply = `I said I'd do that, but I haven't actually done it. Tell me to go ahead and I will.`; }
+  }
   clearTimeout(liveTimer);
   events.emit('lidia-live', null);
   if (reply.trim()) events.emit('notify', { text: reply });   // she has something for Jav

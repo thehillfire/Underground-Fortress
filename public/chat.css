@@ -133,3 +133,12 @@
 .chat-sheet .sw-custom input { position: absolute; inset: -8px; width: 60px; height: 60px; opacity: 0; cursor: pointer; }
 .chat-sheet .done { min-height: 46px; background: var(--t-btn); color: #fff; border: 0; border-radius: 12px; box-shadow: none; font-family: var(--pixel); }
 .talk-chat[data-style=retro] .chat-sheet, .talk-chat[data-style=retro] .chat-sheet .styles button, .talk-chat[data-style=retro] .chat-sheet .done, .talk-chat[data-style=retro] .chat-sheet .sw, .talk-chat[data-style=retro] .chat-sheet .sw-custom { border-radius: 0; }
+
+/* Lidia's reviews: a row you can open to read her reasoning */
+.review { align-self: stretch; display: flex; align-items: center; gap: 8px; text-align: left; margin: 4px 0; padding: 7px 11px; min-height: 0; border-radius: 12px; background: var(--t-sys); border: 1px solid var(--t-line);
+  font-family: var(--ff); font-size: var(--fs-m); color: var(--t-muted); box-shadow: none; text-transform: none; letter-spacing: 0; }
+.review span { flex: 1; min-width: 0; } .review b { color: var(--t-them-fg); font-weight: 500; } .review em { font-style: normal; color: var(--t-think); }
+.rv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--t-think); flex: none; }
+.review.d-done .rv-dot { background: #2fbf5a; } .review.d-escalate .rv-dot { background: #ff5a4a; } .review.d-continue .rv-dot { background: #e0b340; }
+.talk-chat[data-style=retro] .review { border-radius: 0; border-width: 2px; }
+.review-think { margin: 0 4px 6px 14px; }
