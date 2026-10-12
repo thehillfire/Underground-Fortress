@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { store, id, WORKSPACES } from './store.js';
-import { runTurn } from './agent.js';
+import { runTurn, runReview } from './agent.js';
+import { moneyHooks } from './guard.js';
+import { installed as installedSkills } from './skills.js';
 import * as lidia from './lidia.js';
 import { mcpServersFor } from './connectors.js';
 
@@ -99,6 +101,7 @@ export function send(sid, text, from = 'jav') {
   if (!s || !text?.trim()) return;
   if (from === 'jav' || from === 'jav-via-lidia') {
     s.autoTurns = 0;
+    s.refineRound = 0;      // new direction from Jav: fresh improvement budget
     if (s.pendingQuestion) {
       store.state.precedents.push({ ts: Date.now(), session: s.name, question: s.pendingQuestion, answer: text });
       if (store.state.precedents.length > 100) store.state.precedents.shift();
@@ -130,7 +133,8 @@ async function turn(s, text, from) {
       model: s.model || store.state.settings.model,
       permissionMode: store.state.settings.permissionMode,
       mcpServers: mcpServersFor(),
-      appendSystem: `You are "${s.name}", a dweller in Jav's Underground Fortress. Your captain is Lidia; when you finish a turn she reads your final message and decides what you do next, or asks Jav. End every turn with a short, plain report: what you did, what is left, and any question that blocks you.${s.goal ? `\nYour standing goal: ${s.goal}` : ''}`,
+      appendSystem: ownerBrief(s),
+      hooks: moneyHooks((tool, input, reason) => holdMoney(s, tool, input, reason)),
       abortController: ac,
       onInit: (m) => { if (m.session_id) s.sdkSessionId = m.session_id; if (m.mcp_servers) lidia.noteConnectors(m); store.changed(); },
       onText: (t) => { log(s, 'claude', t); events.emit('bubble', { who: 'session', sessionId: s.id, text: t }); },
@@ -168,6 +172,20 @@ function drainQueue(s) {
   if (next) turn(s, next.text, next.from);
 }
 
+/** Every agent runs its room like a business it owns. */
+function ownerBrief(s) {
+  const skills = installedSkills().map(k => k.name);
+  return `You are "${s.name}", a business owner in Jav's Underground Fortress. Your room is your business${s.goal ? ` and your mission is: ${s.goal}` : ''}.
+Operate like an owner who wants the best possible result:
+- Plan before you act. Execute in small, verified steps. Check your work actually runs or reads well.
+- Critique yourself before reporting: score your output 1-10 on outcome, quality, and how good it looks and reads to a human, and fix the weakest part if you can.
+- Use skills. ${skills.length ? `Installed skills: ${skills.join(', ')}.` : 'Check which skills are installed.'} Whenever one fits (planning, design, frontend, testing, debugging, docs, review), invoke it instead of improvising.
+- Use Jav's connected apps (calendar, email, docs, CRM…) whenever they help.
+- Fellow owners will review your work and send fixes. Take them seriously, and push back with reasons when they're wrong.
+- MONEY RULE: never spend money. Never buy, pay, subscribe, transfer, book, or enter payment details. Prepare it fully and ask Jav; the fortress blocks those actions until Jav approves.
+Your captain is Lidia. End every turn with a short report: what you did, your self-score (n/10), what's next, and any blocker.`;
+}
+
 /** Walk up to Lidia and get told what to do next. */
 async function report(s, result, isError) {
   const st = store.state;
@@ -189,11 +207,26 @@ async function report(s, result, isError) {
   if (s.queue.length) return drainQueue(s);
 
   store.report({ sessionId: s.id, name: s.name, decision: d.decision, note: d.note || '', instruction: d.instruction, question: d.question });
+  const cfg = st.settings;
+  s.errorStreak = isError ? (s.errorStreak || 0) + 1 : 0;
+  s.reportsSinceReview = (s.reportsSinceReview || 0) + 1;
+  const falling = s.errorStreak >= 2 || d.health === 'stalled';
+
   if (d.decision === 'continue') {
     s.autoTurns += 1;
+    // Falling behind, or due for a check-up: a fellow owner reviews before the next step.
+    if (cfg.refineEnabled && (falling || s.reportsSinceReview >= cfg.reviewEvery)) {
+      return peerReview(s, falling ? 'rescue' : 'checkup', d.instruction);
+    }
     store.feed(`Lidia → ${s.name}: ${d.note || d.instruction}`, 'lidia', s.id);
     turn(s, d.instruction, 'lidia');
   } else if (d.decision === 'done') {
+    // "Done" isn't the end for an owner: improvement rounds until the budget is spent.
+    if (cfg.refineEnabled && (s.refineRound || 0) < cfg.refineRounds) {
+      s.refineRound = (s.refineRound || 0) + 1;
+      store.feed(`${s.name} hit the goal. Improvement round ${s.refineRound}/${cfg.refineRounds}.`, 'lidia', s.id);
+      return peerReview(s, 'improve');
+    }
     log(s, 'lidia', `Good work. ${d.note || 'Goal complete.'}`);
     events.emit('bubble', { who: 'lidia', sessionId: s.id, text: 'Good work. Stand down.' });
     store.feed(`${s.name} finished: ${d.note || 'goal complete'}`, 'done', s.id);
@@ -207,14 +240,88 @@ async function report(s, result, isError) {
   }
 }
 
-function askPermission(s, toolName, input) {
+// ------------------------------------------------------------------ peer review
+const reviewing = new Set();   // critics currently out on a review
+
+/** Pick a fellow owner to do the review: someone not busy, not the owner. */
+function pickCritic(owner) {
+  const free = store.state.sessions.filter(x => x.id !== owner.id && !running.has(x.id) && !reviewing.has(x.id));
+  free.sort((a, b) => (a.reviewsGiven || 0) - (b.reviewsGiven || 0));
+  return free[0] || null;
+}
+
+function extractJson(text) {
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  try { return a > -1 && b > a ? JSON.parse(text.slice(a, b + 1)) : null; } catch { return null; }
+}
+
+/**
+ * A fellow owner walks over, reads the actual work (read-only), scores it and
+ * hands back fixes. kind: checkup | rescue | improve.
+ */
+async function peerReview(owner, kind, nextStep = '') {
+  const critic = pickCritic(owner);
+  const criticName = critic ? critic.name : 'the Inspector';
+  setStatus(owner, 'reporting', `under review by ${criticName}`);
+  if (critic) { reviewing.add(critic.id); critic.reviewsGiven = (critic.reviewsGiven || 0) + 1; events.emit('visit', { from: critic.id, to: owner.id }); }
+  events.emit('bubble', { who: 'session', sessionId: critic?.id || owner.id, text: kind === 'rescue' ? `Let me help, ${owner.name}.` : `Let's see your work, ${owner.name}.` });
+  store.feed(`${criticName} is ${kind === 'rescue' ? 'helping' : 'reviewing'} ${owner.name}.`, 'info', owner.id);
+
+  const focus = {
+    checkup: 'This is a routine check-up mid-project. Catch problems early.',
+    rescue: `${owner.name} is falling behind (errors or no progress). Diagnose what is going wrong and give a concrete way forward.`,
+    improve: `${owner.name} believes the goal is done. Push them from good to excellent: what would make a demanding human say "wow"?`,
+  }[kind];
+  const system = `You are ${criticName}, a fellow business owner in Jav's fortress, doing a peer review of ${owner.name}'s business. You can read their files and the web, nothing else. Be direct and specific; praise only what earns it.`;
+  const prompt = `${focus}
+
+${owner.name}'s mission: ${owner.goal || '(see their recent work)'}
+
+Their recent transcript:
+${owner.log.slice(-16).map(e => `[${e.role}${e.tool ? ':' + e.tool : ''}] ${String(e.text).slice(0, 500)}`).join('\n')}
+
+Inspect the actual work in this workspace (files, output) before judging. Then reply with ONLY JSON:
+{"score": <1-10 overall>, "verdict": "<one sentence>", "fixes": ["<specific fix>", "... 3-5 total, most important first"], "praise": "<what is genuinely good>", "skills": ["<installed skill they should use next, if any>"], "healthy": <true|false>}`;
+
+  let r;
+  try {
+    const out = await runReview({ cwd: cwdFor(owner), prompt, system, model: owner.model || store.state.settings.model });
+    store.addSpend(out.costUsd, critic?.id || 'lidia');
+    if (critic) critic.costUsd += out.costUsd || 0;
+    r = extractJson(out.text);
+  } catch (err) { r = null; log(owner, 'system', `Peer review failed: ${err.message}`); }
+  finally { if (critic) { reviewing.delete(critic.id); events.emit('visit-end', { from: critic.id }); } }
+
+  if (!r || !Array.isArray(r.fixes)) {               // review fell through: carry on as Lidia said
+    if (nextStep) return turn(owner, nextStep, 'lidia');
+    return setStatus(owner, 'done', 'off duty');
+  }
+  owner.reportsSinceReview = 0;
+  owner.scores = [...(owner.scores || []), { ts: Date.now(), score: r.score, by: criticName, kind }].slice(-20);
+  const text = `Peer review from ${criticName} (${kind}): ${r.score}/10. ${r.verdict || ''}
+Fixes:
+${r.fixes.map((f, i) => `${i + 1}. ${f}`).join('\n')}${r.praise ? `\nWorking well: ${r.praise}` : ''}${r.skills?.length ? `\nSkills to use: ${r.skills.join(', ')}` : ''}`;
+  owner.lastReview = { by: criticName, score: r.score, kind, ts: Date.now() };
+  if (critic) log(critic, 'system', `Reviewed ${owner.name}: ${r.score}/10.`);
+  store.feed(`${criticName} reviewed ${owner.name}: ${r.score}/10, ${r.fixes.length} fixes.`, 'review', owner.id);
+  events.emit('bubble', { who: 'session', sessionId: critic?.id || owner.id, text: `${r.score}/10. ${r.fixes[0]}` });
+
+  const ask = kind === 'improve'
+    ? `${text}\n\nYou hit your goal; now make it excellent. Work through these fixes (push back on any you disagree with, with reasons), verify, and report with a new self-score.`
+    : `${text}\n\nAddress these fixes${nextStep ? `, then continue with: ${nextStep}` : ''}. Push back on any you disagree with, with reasons. Report with a new self-score.`;
+  turn(owner, ask, 'critic');
+}
+
+function askPermission(s, toolName, input, kind = 'tool', reason = '') {
   const pid = id('perm');
   return new Promise((resolve) => {
-    s.pendingPermission = { id: pid, tool: toolName, input: summarizeInput(input) };
+    const shown = kind === 'money' ? JSON.stringify(input ?? {}, null, 1).slice(0, 900) : summarizeInput(input);
+    s.pendingPermission = { id: pid, tool: toolName, input: shown, kind, reason };
     const prev = s.status;
-    setStatus(s, 'needs_jav', `asking to use ${toolName}`);
-    store.feed(`${s.name} asks permission for ${toolName}.`, 'alert', s.id);
-    events.emit('alert', { sessionId: s.id, text: `May I use ${toolName}?` });
+    setStatus(s, 'needs_jav', kind === 'money' ? 'waiting for Jav: money' : `asking to use ${toolName}`);
+    const what = kind === 'money' ? `MONEY: ${s.name} wants to run ${reason}. Waiting for you.` : `${s.name} asks permission for ${toolName}.`;
+    store.feed(what, 'alert', s.id);
+    events.emit('alert', { sessionId: s.id, text: kind === 'money' ? `${s.name} wants to run ${reason}. Only you can approve.` : `May I use ${toolName}?` });
     permissionWaiters.set(pid, (allow) => {
       s.pendingPermission = null;
       setStatus(s, prev === 'needs_jav' ? 'working' : prev, activityFor(toolName));
@@ -222,6 +329,11 @@ function askPermission(s, toolName, input) {
                     : { behavior: 'deny', message: 'Jav denied this action.' });
     });
   });
+}
+
+/** Money actions: frozen until Jav taps approve in the app. Resolves true/false. */
+function holdMoney(s, toolName, input, reason) {
+  return askPermission(s, toolName, input, 'money', reason).then(r => r.behavior === 'allow');
 }
 
 export function answerPermission(sid, pid, allow) {

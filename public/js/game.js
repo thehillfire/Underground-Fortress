@@ -65,7 +65,7 @@ export function setState(st) {
     e.home = i;
     e.session = s;
     // Head back home when a report is over.
-    if (e.away && s.status !== 'reporting') goHome(e);
+    if (e.away && !e.visiting && s.status !== 'reporting') goHome(e);
   });
 }
 
@@ -93,6 +93,25 @@ export function report(sessionId) {
     { x: shaftX, level: 0, shaft: true }, { x: BRIDGE.x + 30, level: 0 },
     { x: lidia.x - 60 - Math.random() * 40, level: 0 },
   ];
+}
+
+/** A fellow owner walks over to another owner's room to review their work. */
+export function visit(fromId, toId) {
+  const e = chars.get(fromId), t = chars.get(toId);
+  if (!e || !t) return;
+  const r = slotRect(e.home), tr = slotRect(t.home);
+  e.away = true; e.visiting = true;
+  const dest = { x: tr.x + tr.w * (0.25 + Math.random() * 0.5), level: tr.level };
+  e.path = [
+    { x: doorX(r), level: r.level }, { x: 0, level: r.level, shaft: true },
+    { x: 0, level: tr.level, shaft: true }, { x: doorX(tr), level: tr.level }, dest,
+  ];
+}
+export function visitEnd(fromId) {
+  const e = chars.get(fromId);
+  if (!e) return;
+  e.visiting = false;
+  goHome(e);
 }
 
 function goHome(e) {
@@ -296,10 +315,10 @@ function draw(now) {
     const s = e.session;
     if (!s) continue;
     const alert = s.status === 'needs_jav';
-    const anim = alert && !e.walking ? 'panic' : e.walking ? 'walk' : s.status === 'working' ? 'work' : 'rest';
+    const anim = alert && !e.walking ? 'panic' : e.walking ? 'walk' : (s.status === 'working' || e.visiting) ? 'work' : 'rest';
     drawCharacter(e, alert ? art.chars.survivorRed : art.chars.survivor, anim, CHAR_H, {
       name: s.name.toUpperCase(), color: `hsl(${s.hue},45%,70%)`, now, alert, done: s.status === 'done',
-      working: s.status === 'working', activity: s.activity, selected: s.id === selected,
+      working: s.status === 'working' || e.visiting, activity: e.visiting ? 'reviewing' : s.activity, selected: s.id === selected,
     });
   }
 }

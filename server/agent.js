@@ -1,5 +1,6 @@
 // Thin wrapper over the Claude Agent SDK, plus a mock runner for offline demos.
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { moneyHooks } from './guard.js';
 
 export const MOCK = process.env.FORTRESS_MOCK === '1';
 
@@ -17,7 +18,7 @@ const CLAUDE_PATH = process.env.FORTRESS_CLAUDE_PATH ? { pathToClaudeCodeExecuta
 export async function runTurn(opts) {
   if (MOCK) return mockTurn(opts);
   const { prompt, cwd, resume, model, permissionMode, mcpServers, appendSystem,
-          onInit, onText, onTool, canUseTool, abortController } = opts;
+          onInit, onText, onTool, canUseTool, abortController, hooks } = opts;
   const q = query({
     prompt,
     options: {
@@ -30,6 +31,7 @@ export async function runTurn(opts) {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: appendSystem },
       canUseTool,
       abortController,
+      hooks,
       ...CLAUDE_PATH,
     },
   });
@@ -99,6 +101,7 @@ export async function runCaptain({ prompt, resume, model, system, server, extraS
         ? { behavior: 'allow', updatedInput: input }
         : { behavior: 'deny', message: 'The captain only uses fortress tools and connectors. Assign an agent for files or shell work.' },
       maxTurns: 16,
+      hooks: moneyHooks(null),
       ...CLAUDE_PATH,
     },
   });
@@ -116,6 +119,29 @@ export async function runCaptain({ prompt, resume, model, system, server, extraS
   return out;
 }
 
+/**
+ * A peer review: a fresh, read-only session in the owner's workspace.
+ * It can read files and the web, and nothing else.
+ */
+const REVIEW_TOOLS = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+export async function runReview({ cwd, prompt, system, model }) {
+  if (MOCK) return mockReview();
+  const q = query({
+    prompt,
+    options: {
+      cwd, model: model || undefined, systemPrompt: system,
+      tools: REVIEW_TOOLS, allowedTools: REVIEW_TOOLS, permissionMode: 'dontAsk',
+      settingSources: ['user'], maxTurns: 30, hooks: moneyHooks(null), ...CLAUDE_PATH,
+    },
+  });
+  let text = '', costUsd = 0;
+  for await (const m of q) {
+    if (m.type === 'assistant') { for (const b of m.message?.content || []) if (b.type === 'text') text = b.text; }
+    else if (m.type === 'result') { if (m.result) text = m.result; costUsd = m.total_cost_usd || 0; }
+  }
+  return { text, costUsd };
+}
+
 // ---------------------------------------------------------------- mock mode
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const MOCK_TOOLS = [
@@ -124,7 +150,7 @@ const MOCK_TOOLS = [
   ['WebSearch', { query: 'best practices' }], ['Write', { file_path: 'notes.md' }],
 ];
 
-async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, abortController }) {
+async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, abortController, hooks }) {
   const sessionId = resume || `mock-${Math.random().toString(36).slice(2, 10)}`;
   onInit?.({ session_id: sessionId });
   await sleep(800);
@@ -132,7 +158,14 @@ async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, ab
   const steps = 2 + Math.floor(Math.random() * 3);
   for (let i = 0; i < steps; i++) {
     if (abortController?.signal.aborted) return { result: 'Interrupted.', isError: true, costUsd: 0, sessionId };
-    const [name, input] = MOCK_TOOLS[Math.floor(Math.random() * MOCK_TOOLS.length)];
+    let [name, input] = MOCK_TOOLS[Math.floor(Math.random() * MOCK_TOOLS.length)];
+    if (process.env.FORTRESS_MOCK_MONEY === '1' && i === 0) [name, input] = ['mcp__stripe__create_payment_link', { product: 'Bunker Pro', amount: 4900, currency: 'usd' }];
+    // Run the real money gate exactly as the SDK would.
+    const gate = hooks?.PreToolUse?.[0]?.hooks?.[0];
+    if (gate) {
+      const r = await gate({ hook_event_name: 'PreToolUse', tool_name: name, tool_input: input }, undefined, { signal: abortController?.signal });
+      if (r?.hookSpecificOutput?.permissionDecision === 'deny') { onText?.(r.hookSpecificOutput.permissionDecisionReason); continue; }
+    }
     if (name === 'Bash' && canUseTool && Math.random() < 0.3) {
       const r = await canUseTool(name, input, { signal: abortController?.signal });
       if (r.behavior === 'deny') { onText?.('Okay, skipping that command.'); continue; }
@@ -150,8 +183,10 @@ async function mockTurn({ prompt, resume, onInit, onText, onTool, canUseTool, ab
 async function mockOneShot(prompt) {
   await sleep(700);
   if (/Jav says:/.test(prompt)) return 'Understood, Jav. I will pass that down the shafts.';
-  return Math.random() < 0.6
-    ? JSON.stringify({ decision: 'continue', instruction: 'Good work. Proceed with the next step and verify it.', note: 'routine progress' })
+  const roll = Math.random();
+  if (roll < 0.25) return JSON.stringify({ decision: 'done', note: 'goal met' });
+  return roll < 0.75
+    ? JSON.stringify({ decision: 'continue', instruction: 'Good work. Proceed with the next step and verify it.', note: 'routine progress', health: 'on_track' })
     : JSON.stringify({ decision: 'escalate', question: 'Two approaches are open and neither is covered by standing orders. Which does Jav want?' });
 }
 
@@ -178,3 +213,13 @@ async function mockCaptain({ prompt, onTool }) {
   return { text: reply, costUsd: 0.006, sessionId: 'mock-lidia' };
 }
 export const mockTools = {};
+
+async function mockReview() {
+  await sleep(2500);
+  const score = 4 + Math.floor(Math.random() * 5);
+  return { costUsd: 0.02, text: JSON.stringify({
+    score, verdict: score >= 8 ? 'Strong, ship it after polish.' : 'Works, but a human would notice rough edges.',
+    fixes: ['Tighten the empty and error states', 'Add a test for the main path', 'Use the frontend-design skill for spacing and type scale'],
+    praise: 'Clear structure and honest reporting.', healthy: score >= 5,
+  }) };
+}

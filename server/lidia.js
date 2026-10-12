@@ -10,6 +10,7 @@ import { oneShot, runCaptain, mockTools } from './agent.js';
 import { store } from './store.js';
 import { mcpServersFor } from './connectors.js';
 import * as sessions from './sessions.js';
+import * as skills from './skills.js';
 
 export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'];
 
@@ -85,6 +86,13 @@ const TOOLS = [
     }),
   tool('stop_agent', "Interrupt an agent's current turn.", { name: z.string() },
     async ({ name }) => { const s = find(name); if (!s) return fail(`No agent named ${name}`); sessions.stop(s.id); return ok(`${s.name} stopped.`); }),
+  tool('list_skills', 'Skills installed for every agent (name and what it is for).', {},
+    async () => ok(skills.installed().map(k => `${k.name}: ${k.description.slice(0, 160)}`).join('\n') || '(none installed)')),
+  tool('find_skills', 'Search the skill shelves (GitHub skill repos) for skills that could help.', { query: z.string() },
+    async ({ query }) => { const r = await skills.find(query); return ok(r.skills.slice(0, 25).map(k => `${k.name}${k.installed ? ' [installed]' : ''} (${k.repo}): ${k.description.slice(0, 140)}`).join('\n') || 'Nothing found.'); }),
+  tool('install_skills', 'Install skills by name for every agent, or pass ["starter"] for the full starter armory (design, frontend, testing, planning, debugging, review).',
+    { names: z.array(z.string()) },
+    async ({ names }) => ok(await (names.length === 1 && names[0] === 'starter' ? skills.installStarter() : skills.installByName(names)))),
   tool('set_standing_orders', 'Replace the standing orders you use to judge reports. Only when Jav changes policy.', { text: z.string() },
     async ({ text }) => { store.state.standingOrders = text; store.changed(); return ok('Standing orders updated.'); }),
 ];
@@ -112,10 +120,11 @@ FINAL REPORT OF THIS TURN:
 ${String(result).slice(0, 4000)}
 
 Decide what this agent does next. Reply with ONLY a JSON object, one of:
-{"decision":"continue","instruction":"<exact next instruction to the agent>","note":"<5-12 word summary for Jav>"}
+{"decision":"continue","instruction":"<exact next instruction to the agent>","note":"<5-12 word summary for Jav>","health":"on_track|stalled"}
 {"decision":"done","note":"<5-12 word summary for Jav>"}
 {"decision":"escalate","question":"<the specific question Jav must answer>","note":"<5-12 word summary>"}
 
+Set "health" to "stalled" when the agent is going in circles, repeating failures, or not making real progress; a fellow owner will then be sent to help.
 Rules: choose "continue" only when the next step clearly follows from the goal, standing orders or precedents. Choose "done" when the goal is met. Choose "escalate" whenever the agent asks a question you cannot answer from the orders/precedents, the work is ambiguous, risky, or needs Jav's taste or credentials.`;
   const { text, costUsd } = await oneShot({ system: PERSONA, prompt, model: store.state.settings.lidiaModel });
   store.addSpend(costUsd, 'lidia');
@@ -140,6 +149,9 @@ Jav says: ${text}`;
   const system = `${PERSONA}
 
 You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, create agents (each gets a room), change an agent's model, hand agents data, stop agents, and update your standing orders.
+Arm your agents: check list_skills, and when work needs design, frontend, testing, planning, debugging or review, make sure the right skills are installed (find_skills / install_skills) and tell the agent which to use.
+Your agents are business owners. They improve their own work and review each other automatically; you decide direction, unblock them, and keep Jav informed.
+Money is Jav's alone: you and the agents cannot spend, buy, pay or transfer. Anything like that waits for Jav's tap in the app.
 You can also use every app Jav has connected (tools named mcp__…: calendar, email, docs, CRM and the like). When Jav asks for something an app can do (put it on the calendar, check email, look something up), do it yourself right away with that tool and confirm what you did, with the specifics (date, time, title, link). If no connected tool can do it, say which app Jav needs to connect in the Armory. For long or hands-on work (code, files, research), assign an agent instead.
 Use your tools; never just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
   const out = await runCaptain({ prompt, resume: st.lidiaSessionId, model: st.settings.lidiaModel, system,

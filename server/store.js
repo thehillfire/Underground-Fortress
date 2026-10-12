@@ -15,8 +15,11 @@ const DEFAULT_STATE = {
     permissionMode: 'acceptEdits',
     lidiaAutopilot: true,         // Lidia answers finished sessions automatically
     maxAutoTurns: 6,              // Lidia stops nudging after this many in a row
-    skillSources: ['anthropics/skills'],
+    skillSources: ['anthropics/skills', 'obra/superpowers'],
     autoApproveConnectors: true,  // agents use connected apps without asking each time
+    refineEnabled: true,          // owners keep improving and review each other without Jav
+    refineRounds: 2,              // improvement rounds after an agent hits its goal
+    reviewEvery: 3,               // peer check-up every N reports
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
   sessions: [],
@@ -43,6 +46,7 @@ class Store extends EventEmitter {
     this.state = { ...structuredClone(DEFAULT_STATE), ...loaded,
       settings: { ...DEFAULT_STATE.settings, ...(loaded.settings || {}) },
       spend: { ...DEFAULT_STATE.spend, ...(loaded.spend || {}) } };
+    if (!this.state.settings.skillSources.includes('obra/superpowers')) this.state.settings.skillSources.push('obra/superpowers');
     // Anything that was mid-turn when the server stopped is idle now.
     for (const s of this.state.sessions) {
       if (s.status === 'working' || s.status === 'reporting') s.status = 'idle';

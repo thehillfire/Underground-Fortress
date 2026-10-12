@@ -60,7 +60,7 @@ app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
-  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors'];
+  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery'];
   for (const k of allowed) if (k in r.body) store.state.settings[k] = r.body[k];
   store.changed();
 }));
@@ -107,6 +107,8 @@ app.delete('/api/connectors/:id', wrap((r) => {
 // Skills
 app.get('/api/skills/find', wrap((r) => skills.find(String(r.query.q || ''), String(r.query.repo || ''))));
 app.post('/api/skills/install', wrap((r) => skills.install(r.body.repo, r.body.dir)));
+app.post('/api/skills/starter', wrap(() => skills.installStarter()));
+app.get('/api/skills/starter', wrap(() => skills.STARTER));
 app.delete('/api/skills/:dir', wrap((r) => skills.uninstall(r.params.dir)));
 
 // Live updates
@@ -123,7 +125,7 @@ store.on('change', () => {
   if (pending) return;
   pending = setTimeout(() => { pending = null; broadcast({ type: 'state', state: snapshot() }); }, 120);
 });
-for (const ev of ['bubble', 'report', 'alert']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
+for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
 
 await ensureAssets();
 server.listen(PORT, HOST, () => {

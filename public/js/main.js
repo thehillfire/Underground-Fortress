@@ -165,8 +165,8 @@ function chatRows() {
   for (const s of state.sessions) {
     const talk = s.log.filter(e => e.role === 'claude' || e.role === 'lidia' || e.role === 'jav');
     const l = talk[talk.length - 1];
-    const ask = s.pendingPermission ? `Asks permission: ${s.pendingPermission.tool}` : s.pendingQuestion;
-    rows.push({ id: s.id, name: s.name.toUpperCase(), sub: `${s.roomType} · ${s.model || 'default'} · ${s.status === 'working' ? s.activity : (STATUS_LABEL[s.status] || s.status)}`,
+    const ask = s.pendingPermission?.kind === 'money' ? `MONEY: wants to run ${s.pendingPermission.reason}` : s.pendingPermission ? `Asks permission: ${s.pendingPermission.tool}` : s.pendingQuestion;
+    rows.push({ id: s.id, name: s.name.toUpperCase(), sub: `${s.roomType} · ${s.model || 'default'}${s.lastReview ? ` · ${s.lastReview.score}/10` : ''} · ${s.status === 'working' ? s.activity : (STATUS_LABEL[s.status] || s.status)}`,
       dot: DOT[s.status] || 'grey', rank: RANK[s.status] ?? 2, alert: !!ask,
       last: ask || (l ? `${l.role === 'jav' ? 'You: ' : l.role === 'lidia' ? 'Lidia: ' : ''}${l.text}` : 'No messages yet'),
       ts: s.log[s.log.length - 1]?.ts || s.createdAt, unread: s.log.filter(e => (e.role === 'claude' || e.role === 'lidia') && e.ts > (seen[s.id] || 0)).length });
@@ -254,10 +254,16 @@ function refreshSession() {
   if (!s) { close(); return; }
   $('#panel-title').textContent = s.name;
   $('#s-head').innerHTML = `<div class="chips"><span class="chip st-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>
-    <span class="chip">${esc(s.roomType)}</span><span class="chip">${esc(s.model || 'default model')}</span><span class="chip">${esc(s.activity || '')}</span><span class="chip">would-cost $${(s.costUsd || 0).toFixed(2)}</span></div>
+    <span class="chip">${esc(s.roomType)}</span><span class="chip">${esc(s.model || 'default model')}</span><span class="chip">${esc(s.activity || '')}</span><span class="chip">would-cost $${(s.costUsd || 0).toFixed(2)}</span>${s.lastReview ? `<span class="chip st-${s.lastReview.score >= 8 ? 'done' : s.lastReview.score >= 5 ? 'working' : 'needs_jav'}">peer score ${esc(s.lastReview.score)}/10</span>` : ''}</div>
     ${s.goal ? `<p class="goal"><b>Goal:</b> ${esc(s.goal)}</p>` : ''}`;
   let alert = '';
-  if (s.pendingPermission) {
+  if (s.pendingPermission?.kind === 'money') {
+    alert = `<div class="alert money"><b>MONEY: only you can approve this</b>
+      <p>${esc(s.name)} wants to run ${esc(s.pendingPermission.reason)} using <code>${esc(s.pendingPermission.tool)}</code>.</p>
+      <pre>${esc(s.pendingPermission.input)}</pre>
+      <p class="muted small">Nothing has been spent. Lidia and the other agents can't approve this; it waits for you.</p>
+      <div class="row"><button class="danger" data-allow="0">DENY</button><button class="primary" data-allow="1">APPROVE</button></div></div>`;
+  } else if (s.pendingPermission) {
     alert = `<div class="alert"><b>${esc(s.name)} asks permission</b> to use <code>${esc(s.pendingPermission.tool)}</code>
       <pre>${esc(s.pendingPermission.input)}</pre>
       <div class="row"><button class="primary" data-allow="1">Allow</button><button class="danger" data-allow="0">Deny</button></div></div>`;
@@ -270,7 +276,7 @@ function refreshSession() {
   renderLog($('#s-log'), s.log);
 }
 
-const ROLE = { jav: 'Jav', lidia: 'Lidia', claude: 'Dweller', tool: 'Tool', system: 'System' };
+const ROLE = { jav: 'Jav', lidia: 'Lidia', claude: 'Owner', tool: 'Tool', system: 'System', critic: 'Peer review' };
 function renderLog(el, log) {
   // Only rebuild when something new arrived, so text selection and COPIED states survive refreshes.
   const key = `${log.length}:${log[log.length - 1]?.ts || 0}`;
@@ -418,6 +424,8 @@ function mountSkills() {
   $('#panel-title').textContent = 'Armory';
   body.innerHTML = `
     <p class="muted">Skills install to <code>~/.claude/skills</code>, so every dweller can use them.</p>
+    <div class="card starter"><div><b>Starter armory</b><div class="muted small">Design, frontend, testing, planning, debugging and code review skills (Anthropic + Superpowers). Every agent gets them.</div><div class="muted small" id="k-starter-list"></div></div>
+      <button class="primary small" id="k-starter">INSTALL ALL</button></div>
     <h4>Installed</h4><div id="k-list"></div>
     <h4>Skill finder</h4>
     <form id="k-form" class="stack">
@@ -440,6 +448,12 @@ function mountSkills() {
     } catch (err) { $('#k-results').innerHTML = `<p class="red">${esc(err.message)}</p>`; }
   };
   $('#k-form').onsubmit = (e) => { e.preventDefault(); run(); };
+  api('GET', '/api/skills/starter').then(p => { $('#k-starter-list').textContent = Object.values(p).flat().join(' · '); }).catch(() => {});
+  $('#k-starter').onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = 'INSTALLING…';
+    try { const r = await api('POST', '/api/skills/starter'); toast(`Installed ${r.installed.length} skills${r.missing.length ? `, ${r.missing.length} not found` : ''}`); b.textContent = 'DONE'; run(); }
+    catch (err) { toast(err.message); b.disabled = false; b.textContent = 'INSTALL ALL'; }
+  };
   run();
 }
 function refreshSkills() {
@@ -489,6 +503,11 @@ function mountSettings() {
       <label>Dweller model <input id="g-model" value="${esc(st.model)}" placeholder="default (e.g. claude-opus-5-5, claude-sonnet-5-5)"></label>
       <label>Lidia's model <input id="g-lmodel" value="${esc(st.lidiaModel)}" placeholder="default"></label>
       <label>Permission mode <select id="g-perm">${[['default', 'Ask me for every risky tool'], ['acceptEdits', 'Auto-accept file edits, ask for the rest'], ['auto', 'Classifier decides, asks when unsure'], ['plan', 'Plan only, no changes'], ['bypassPermissions', 'Never ask (dangerous)']].map(([v, l]) => `<option value="${v}" ${v === st.permissionMode ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="inline"><input type="checkbox" id="g-refine" ${st.refineEnabled ? 'checked' : ''}> Owners improve on their own and review each other</label>
+      <div class="row"><label>Improvement rounds after a goal is hit <input id="g-rounds" type="number" min="0" max="10" value="${st.refineRounds}"></label>
+        <label>Peer check-up every N reports <input id="g-every" type="number" min="1" max="20" value="${st.reviewEvery}"></label></div>
+      <label class="inline"><input type="checkbox" id="g-autoconn" ${st.autoApproveConnectors !== false ? 'checked' : ''}> Agents use connected apps without asking</label>
+      <p class="muted small">Money is never automatic: purchases, payments, transfers and bookings always wait for you, whatever these settings say.</p>
       <label>Max automatic nudges in a row before Lidia asks you <input id="g-max" type="number" min="1" max="50" value="${st.maxAutoTurns}"></label>
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
@@ -512,7 +531,9 @@ function mountSettings() {
   $('#g-form').onsubmit = async (e) => {
     e.preventDefault();
     await api('PATCH', '/api/settings', { model: $('#g-model').value.trim(), lidiaModel: $('#g-lmodel').value.trim(), permissionMode: $('#g-perm').value,
-      maxAutoTurns: Number($('#g-max').value) || 6, skillSources: $('#g-src').value.split('\n').map(s => s.trim()).filter(Boolean) });
+      maxAutoTurns: Number($('#g-max').value) || 6, refineEnabled: $('#g-refine').checked,
+      refineRounds: Math.max(0, Number($('#g-rounds').value) || 0), reviewEvery: Math.max(1, Number($('#g-every').value) || 3),
+      autoApproveConnectors: $('#g-autoconn').checked, skillSources: $('#g-src').value.split('\n').map(s => s.trim()).filter(Boolean) });
     toast('Settings saved');
   };
 }

@@ -98,3 +98,38 @@ export function uninstall(dirName) {
   fs.rmSync(target, { recursive: true, force: true });
   store.changed();
 }
+
+// The starter armory: design, frontend, testing, planning, debugging and review.
+export const STARTER = {
+  'anthropics/skills': ['frontend-design', 'web-artifacts-builder', 'webapp-testing', 'theme-factory', 'canvas-design',
+    'brand-guidelines', 'mcp-builder', 'skill-creator', 'doc-coauthoring', 'docx', 'pdf', 'pptx', 'xlsx'],
+  'obra/superpowers': ['brainstorming', 'writing-plans', 'executing-plans', 'test-driven-development', 'systematic-debugging',
+    'verification-before-completion', 'requesting-code-review', 'receiving-code-review', 'dispatching-parallel-agents',
+    'subagent-driven-development', 'finishing-a-development-branch'],
+};
+
+/** Install skills by name from the configured sources. Returns what happened. */
+export async function installByName(names) {
+  const want = new Set(names.map(n => n.toLowerCase()));
+  const done = [], missing = [];
+  const have = new Set(installed().map(s => s.name.toLowerCase()));
+  const repos = [...new Set([...store.state.settings.skillSources, ...Object.keys(STARTER)])];
+  for (const repo of repos) {
+    let list = [];
+    try { list = await catalog(repo); } catch { continue; }
+    for (const sk of list) {
+      const n = sk.name.toLowerCase();
+      if (!want.has(n)) continue;
+      want.delete(n);
+      if (have.has(n)) { done.push(`${sk.name} (already)`); continue; }
+      await install(repo, sk.dir);
+      done.push(sk.name);
+    }
+  }
+  missing.push(...want);
+  return { installed: done, missing };
+}
+
+export function installStarter() {
+  return installByName(Object.values(STARTER).flat());
+}

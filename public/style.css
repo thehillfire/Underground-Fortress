@@ -287,3 +287,11 @@ body.listening #mic, body.listening .mic-inline { background: #a3170f !important
 code.inline { background: #1c1b1f; padding: 0 4px; color: #ffd27a; font-size: 0.95em; }
 .msg-body { white-space: pre-wrap; word-break: break-word; }
 .msg-body .codeblock { white-space: normal; }
+
+/* ---- money gate + peer review */
+.alert.money { border-color: var(--accent2); background: #1e1606; animation: none; box-shadow: 0 0 0 3px rgba(201,162,39,0.25); }
+.alert.money b { color: var(--accent2); font-family: var(--pixel); font-weight: 400; font-size: 12px; }
+.m-critic { background: #14121c; border-left: 3px solid #8a7cff; }
+.m-critic .who { color: #b9b0ff; }
+.card.starter { border-color: var(--accent2); background: #17140a; }
+#feed .feed-review { border-left-color: #8a7cff; }

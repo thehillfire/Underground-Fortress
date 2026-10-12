@@ -40,6 +40,9 @@ You need Node 20+ and Claude Code authentication on this machine, either a logge
 | **Voice** | Press `M` or the MIC button. Start with "Lidia, …" or a dweller's name to address them. Replies are text only. Needs Chrome/Edge/Safari speech recognition. |
 | **Chats** | Tap CHATS (top left) for everyone you can talk to: whoever needs you on top, then working, then idle, with unread counts. Tap one and the camera flies to them and opens their chat. |
 | **World** | Drag to pan, wheel or pinch to zoom, click anyone to open their panel. `L` opens Lidia, `Esc` closes. |
+| **Owners** | Every agent runs its room like a business it owns: it plans, executes, verifies, and scores itself. A fellow owner walks over every few reports to read the actual work and send a score and fixes. Agents that are failing or going in circles get a peer sent to help. After hitting a goal, owners keep improving for a set number of rounds (SETUP). |
+| **Money gate** | A hook runs before every tool call of every agent and Lidia, in any permission mode. Payments, purchases, transfers, subscriptions, bookings, payment-API commands, card numbers, and checkout clicks are frozen until Jav taps APPROVE. Lidia and other agents cannot approve them, and no setting disables the gate. |
+| **Skills** | Armory → Skills → *Starter armory* installs design, frontend, testing, planning, debugging and review skills (anthropics/skills + obra/superpowers) for every agent. Lidia can find and install skills herself. |
 | **Ledger** | Tap the gold $ in the top bar to see what this month's work would have cost at API list prices, next to your plan's price ($200 for Max 20x). Broken down by survivor and Lidia, with a month-end pace. The real extra charge on your subscription is $0. |
 | **Settings** | Dweller model, Lidia's model, permission mode, max automatic nudges before Lidia asks you, voice on/off. |
 
