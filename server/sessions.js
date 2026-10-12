@@ -45,7 +45,7 @@ function activityFor(tool) {
   return tool;
 }
 
-export function create({ name, goal = '', roomType, repoId = null }) {
+export function create({ name, goal = '', roomType, repoId = null, model = '', by = 'jav' }) {
   const st = store.state;
   const s = {
     id: id('s'),
@@ -54,6 +54,7 @@ export function create({ name, goal = '', roomType, repoId = null }) {
     roomType: ROOM_TYPES.includes(roomType) ? roomType : ROOM_TYPES[st.sessions.length % ROOM_TYPES.length],
     repoId,
     hue: Math.floor(Math.random() * 360),
+    model,                 // '' = fortress default
     sdkSessionId: null,
     status: 'idle',
     activity: 'settling in',
@@ -66,8 +67,8 @@ export function create({ name, goal = '', roomType, repoId = null }) {
     createdAt: Date.now(),
   };
   st.sessions.push(s);
-  store.feed(`${s.name} moved into a new ${s.roomType}.`, 'info', s.id);
-  if (goal) send(s.id, goal, 'jav');
+  store.feed(`${by === 'lidia' ? 'Lidia assigned' : 'Jav assigned'} ${s.name} to a new ${s.roomType}.`, 'info', s.id);
+  if (goal) send(s.id, goal, by);
   return s;
 }
 
@@ -81,7 +82,7 @@ export function remove(sid) {
 export function update(sid, patch) {
   const s = store.session(sid);
   if (!s) return null;
-  for (const k of ['name', 'goal', 'roomType', 'repoId']) if (k in patch) s[k] = patch[k];
+  for (const k of ['name', 'goal', 'roomType', 'repoId', 'model']) if (k in patch) s[k] = patch[k];
   store.changed();
   return s;
 }
@@ -96,7 +97,7 @@ export function stop(sid) {
 export function send(sid, text, from = 'jav') {
   const s = store.session(sid);
   if (!s || !text?.trim()) return;
-  if (from === 'jav') {
+  if (from === 'jav' || from === 'jav-via-lidia') {
     s.autoTurns = 0;
     if (s.pendingQuestion) {
       store.state.precedents.push({ ts: Date.now(), session: s.name, question: s.pendingQuestion, answer: text });
@@ -113,6 +114,7 @@ export function send(sid, text, from = 'jav') {
 }
 
 async function turn(s, text, from) {
+  if (from === 'jav-via-lidia') from = 'lidia';
   log(s, from, text);
   setStatus(s, 'working', 'thinking');
   if (from === 'lidia') events.emit('bubble', { who: 'lidia', sessionId: s.id, text });
@@ -125,7 +127,7 @@ async function turn(s, text, from) {
       prompt: text,
       cwd: cwdFor(s),
       resume: s.sdkSessionId,
-      model: store.state.settings.model,
+      model: s.model || store.state.settings.model,
       permissionMode: store.state.settings.permissionMode,
       mcpServers: mcpServersFor(),
       appendSystem: `You are "${s.name}", a dweller in Jav's Underground Fortress. Your captain is Lidia; when you finish a turn she reads your final message and decides what you do next, or asks Jav. End every turn with a short, plain report: what you did, what is left, and any question that blocks you.${s.goal ? `\nYour standing goal: ${s.goal}` : ''}`,
@@ -145,6 +147,7 @@ async function turn(s, text, from) {
   }
   if (out.sessionId) s.sdkSessionId = out.sessionId;
   s.costUsd += out.costUsd || 0;
+  store.addSpend(out.costUsd, s.id);
 
   if (ac.signal.aborted) {
     log(s, 'system', 'Stopped by Jav.');
@@ -183,6 +186,7 @@ async function report(s, result, isError) {
   // Jav may have spoken while Lidia was thinking.
   if (s.queue.length) return drainQueue(s);
 
+  store.report({ sessionId: s.id, name: s.name, decision: d.decision, note: d.note || '', instruction: d.instruction, question: d.question });
   if (d.decision === 'continue') {
     s.autoTurns += 1;
     store.feed(`Lidia → ${s.name}: ${d.note || d.instruction}`, 'lidia', s.id);
@@ -234,28 +238,33 @@ function summarizeInput(input) {
   return String(v ?? JSON.stringify(input)).slice(0, 300);
 }
 
-/** Jav talks to Lidia. */
+/** Write data Lidia (or Jav) hands to an agent into their workspace and tell them. */
+export function provideData(sid, title, content) {
+  const s = store.session(sid);
+  const dir = path.join(cwdFor(s), '.fortress', 'data');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${String(title).replace(/[^a-z0-9_.-]+/gi, '-').slice(0, 60) || 'data'}.md`);
+  fs.writeFileSync(file, content);
+  send(sid, `Lidia left you data: "${title}" at ${file}. Read it and use it.`, 'lidia');
+  return file;
+}
+
+/** Jav texts Lidia. */
 export async function talkToLidia(text) {
   const st = store.state;
   st.lidiaChat.push({ ts: Date.now(), role: 'jav', text });
   store.changed();
   events.emit('bubble', { who: 'lidia-thinking' });
-  let r;
-  try { r = await lidia.chat(text); }
-  catch (err) { r = { reply: `I can't reach the surface right now: ${err.message}` }; }
-
   const acts = [];
-  if (r.standingOrders) { st.standingOrders = r.standingOrders; acts.push('updated standing orders'); }
-  for (const d of r.dispatch || []) {
-    const s = st.sessions.find(x => x.name.toLowerCase() === String(d.session).toLowerCase());
-    if (s && d.message) { send(s.id, d.message, 'lidia'); acts.push(`relayed to ${s.name}`); }
-  }
-  if (r.newSession?.name) {
-    const s = create({ name: r.newSession.name, goal: r.newSession.goal || '', roomType: r.newSession.roomType });
-    acts.push(`opened a room for ${s.name}`);
-  }
-  st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: r.reply || 'Copy that.', acts });
+  let reply;
+  try {
+    reply = await lidia.chat(text, (name, input) => {
+      if (name === 'fortress_status' || name === 'read_agent') return;
+      acts.push(`${name.replace(/_/g, ' ')}${input?.name ? ` → ${input.name}` : ''}`);
+    });
+  } catch (err) { reply = `I can't reach the surface right now: ${err.message}`; }
+  st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: reply, acts });
   store.changed();
-  events.emit('bubble', { who: 'lidia', text: r.reply, speak: true });
-  return r;
+  events.emit('bubble', { who: 'lidia', text: reply, speak: true });
+  return { reply, acts };
 }

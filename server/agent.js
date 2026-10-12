@@ -2,6 +2,11 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 export const MOCK = process.env.FORTRESS_MOCK === '1';
+
+// Subscription only: never let an API key (pay-per-token) reach the Claude sessions.
+export const API_KEY_STRIPPED = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+delete process.env.ANTHROPIC_API_KEY;
+delete process.env.ANTHROPIC_AUTH_TOKEN;
 // Use an installed `claude` instead of the SDK's bundled one (escape hatch for unusual platforms).
 const CLAUDE_PATH = process.env.FORTRESS_CLAUDE_PATH ? { pathToClaudeCodeExecutable: process.env.FORTRESS_CLAUDE_PATH } : {};
 
@@ -48,28 +53,64 @@ export async function runTurn(opts) {
   return out;
 }
 
-/** A single tool-less completion, used for Lidia's judgement calls. */
+/** A single tool-less completion, used for Lidia's review of each report. */
 export async function oneShot({ system, prompt, model }) {
-  if (MOCK) return mockOneShot(prompt);
+  if (MOCK) return { text: await mockOneShot(prompt), costUsd: 0.004 };
   const q = query({
     prompt,
     options: {
       model: model || undefined,
       systemPrompt: system,
       maxTurns: 1,
+      tools: [],
       permissionMode: 'dontAsk',
       allowedTools: [],
       settingSources: [],
       ...CLAUDE_PATH,
     },
   });
-  let text = '';
+  let text = '', costUsd = 0;
   for await (const m of q) {
     if (m.type === 'assistant') {
       for (const b of m.message?.content || []) if (b.type === 'text') text += b.text;
-    } else if (m.type === 'result' && m.result) text = m.result;
+    } else if (m.type === 'result') { if (m.result) text = m.result; costUsd = m.total_cost_usd || 0; }
   }
-  return text.trim();
+  return { text: text.trim(), costUsd };
+}
+
+/**
+ * Lidia's own conversation: a persistent session whose only tools are the
+ * fortress controls (no shell, no files). Resumed every time Jav talks to her.
+ */
+export async function runCaptain({ prompt, resume, model, system, server, toolNames, onTool }) {
+  if (MOCK) return mockCaptain({ prompt, onTool });
+  const q = query({
+    prompt,
+    options: {
+      resume: resume || undefined,
+      model: model || undefined,
+      systemPrompt: system,
+      tools: [],
+      mcpServers: { fortress: server },
+      allowedTools: toolNames.map(n => `mcp__fortress__${n}`),
+      permissionMode: 'dontAsk',
+      settingSources: [],
+      maxTurns: 12,
+      ...CLAUDE_PATH,
+    },
+  });
+  const out = { text: '', costUsd: 0, sessionId: resume };
+  for await (const m of q) {
+    if (m.type === 'system' && m.subtype === 'init') out.sessionId = m.session_id;
+    else if (m.type === 'assistant') {
+      for (const b of m.message?.content || []) if (b.type === 'tool_use') onTool?.(b.name.replace('mcp__fortress__', ''), b.input);
+    } else if (m.type === 'result') {
+      out.text = m.result || out.text;
+      out.costUsd = m.total_cost_usd || 0;
+      out.sessionId = m.session_id || out.sessionId;
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- mock mode
@@ -110,3 +151,27 @@ async function mockOneShot(prompt) {
     ? JSON.stringify({ decision: 'continue', instruction: 'Good work. Proceed with the next step and verify it.', note: 'routine progress' })
     : JSON.stringify({ decision: 'escalate', question: 'Two approaches are open and neither is covered by standing orders. Which does Jav want?' });
 }
+
+// Mock captain: understands a few phrases and calls the real fortress tools, so the UI is testable offline.
+async function mockCaptain({ prompt, onTool }) {
+  await sleep(600);
+  const call = async (name, args) => {
+    onTool?.(name, args);
+    return mockTools[name]?.(args);
+  };
+  const text = String(prompt).split('Jav says:').pop().trim();
+  const lower = text.toLowerCase();
+  let reply;
+  const m = /(?:create|open|make|add)\b.*?(?:agent|room|survivor)\s*(?:called|named)?\s*([A-Z][\w-]*)?/i.exec(text);
+  if (m && /create|open|make|add/i.test(lower)) {
+    const name = m[1] || 'Scout';
+    await call('create_agent', { name, goal: text, roomType: /research|read|find/i.test(text) ? 'library' : 'workshop' });
+    reply = `Done. ${name} is moving into a new room now. I'll brief them and they'll report back to me.`;
+  } else {
+    const st = JSON.parse((await call('fortress_status', {}))?.content?.[0]?.text || '{}');
+    const red = (st.agents || []).filter(a => a.status === 'needs_jav');
+    reply = `${(st.agents || []).length} survivors on shift. ` + (red.length ? `${red.map(a => a.name).join(', ')} ${red.length > 1 ? 'are' : 'is'} waiting on you. ` : 'Nobody is blocked. ') + 'Everyone else is working. Want me to push anyone?';
+  }
+  return { text: reply, costUsd: 0.006, sessionId: 'mock-lidia' };
+}
+export const mockTools = {};

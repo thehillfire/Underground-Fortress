@@ -10,7 +10,7 @@ const ROOM_KEYS = ['command', 'workshop', 'library', 'server', 'lab'];
 export const art = { rooms: {}, chars: {}, surface: null, dirt: null };
 
 // Pixel grid sizes (in art pixels). The game draws these at 3x.
-export const PX = { roomW: 240, roomH: 135, charH: 30, lidiaH: 32, zombieH: 30, surfaceW: 640, dirt: 64 };
+export const PX = { roomW: 240, roomH: 135, charH: 30, lidiaH: 26, zombieH: 30, surfaceW: 640, dirt: 64 };
 
 // name -> sheet file, rows (animation names), target height
 const CAST = {
@@ -217,11 +217,105 @@ function person(kind, anim, i) {
   return outline(c);
 }
 
+/** Lidia: petite captain, long black ponytail, black uniform with crimson jacket. 16x24, shorter than survivors. */
+function lidiaSprite(anim, i) {
+  const c = canvas(16, 24), g = c.getContext('2d');
+  const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  const ph = (i / 6) * Math.PI * 2;
+  const step = anim === 'walk' ? Math.round(Math.sin(ph) * 1.5) : 0;
+  const bob = anim === 'walk' ? (i % 3 === 0 ? 0 : 1) : (i % 6 < 3 ? 0 : 1);
+  const top = 5; // shorter than the survivors
+  const skin = '#f0d2bb', hair = '#0d0b10', hairHi = '#2b2638', suit = '#141218', jacket = '#9a1420', jacketDk = '#5e0b14', boot = '#07060a';
+  // boots + legs (slim)
+  px(7 - step, top + 13, 2, 6, suit); px(9 + step, top + 13, 2, 6, suit);
+  px(7 - step, top + 16, 2, 3, boot); px(9 + step, top + 16, 2, 3, boot);
+  px(6 - step, top + 18, 3, 1, boot); px(9 + step, top + 18, 3, 1, boot);
+  // fitted suit with cropped crimson jacket
+  const ty = top + 6 + bob;
+  px(7, ty, 5, 8 - bob, suit);
+  px(7, ty, 5, 4, jacket); px(7, ty + 4, 5, 1, jacketDk); px(9, ty, 1, 4, jacketDk);
+  px(11, ty + 1, 1, 1, '#d4a83a'); // insignia
+  // ponytail swings behind the head
+  const sway = anim === 'walk' ? Math.round(Math.sin(ph + 1) * 1) : (i % 6 < 3 ? 0 : 1);
+  const hy = top + bob;
+  px(5 - sway, hy + 1, 2, 2, hair); px(4 - sway, hy + 3, 2, 4, hair); px(4 - sway, hy + 7, 1, 2, hair);
+  // head + hair
+  px(8, hy + 1, 4, 5, skin);
+  px(7, hy, 5, 2, hair); px(7, hy + 2, 1, 3, hair); px(8, hy, 2, 1, hairHi);
+  px(11, hy + 3, 1, 1, '#1a1012'); px(11, hy + 5, 1, 1, '#c45a62'); // eye, lips
+  px(12, hy + 3, 1, 2, '#3a3a44'); // headset mic
+  // arms
+  const ax = 10, ay = ty + 1;
+  if (anim === 'command') {
+    const up = i % 3 === 0 ? 1 : 0;
+    px(ax, ay, 5, 1, jacket); px(ax + 5, ay - up, 1, 1, skin); px(6, ay + 2, 1, 3, jacket); // point + hand on hip
+  } else if (anim === 'idle') {
+    px(ax, ay + 1, 3, 2, jacket); px(ax + 2, ay + 2, 3, 2, '#5ad1ff'); // tablet glow
+  } else {
+    const sw = anim === 'walk' ? Math.round(-Math.sin(ph) * 1.5) : 0;
+    px(ax - 1 + sw, ay, 1, 5, jacket); px(ax - 1 + sw, ay + 5, 1, 1, skin);
+  }
+  return outline(c);
+}
+
 function drawnCast(kind) {
+  if (kind === 'lidia') {
+    const anims = {};
+    for (const a of CAST.lidia.anims) anims[a] = Array.from({ length: 6 }, (_, i) => lidiaSprite(a, i));
+    return anims;
+  }
   const names = CAST[kind].anims;
   const anims = {};
   for (const a of names) anims[a] = Array.from({ length: 6 }, (_, i) => person(kind, a, i));
   return anims;
+}
+
+/** Key a single figure (magenta or green screen), crop it, and pixelize to `targetH` art pixels. */
+function portrait(img, targetH) {
+  if (!img) return null;
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const c = canvas(W, H);
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, W, H), p = d.data;
+  let x0 = W, y0 = H, x1 = 0, y1 = 0;
+  for (let i = 0, j = 0; i < p.length; i += 4, j++) {
+    if (isKey(p[i], p[i + 1], p[i + 2])) { p[i + 3] = 0; continue; }
+    const x = j % W, y = (j / W) | 0;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  g.putImageData(d, 0, 0);
+  if (x1 <= x0) return null;
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  return outline(pixelize(downsample(cropTo(c, x0, y0, w, h), Math.round(w * targetH / h), targetH), 14));
+}
+
+/** Drawn stand-in for the dialogue portrait: waist-up Lidia, 44x56 art pixels. */
+function drawnPortrait() {
+  const c = canvas(44, 56), g = c.getContext('2d');
+  const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  const skin = '#f0d2bb', skinSh = '#d9b29a', hair = '#0d0b10', hairHi = '#2e2840', jacket = '#9a1420', jacketDk = '#5e0b14', suit = '#141218';
+  // ponytail (behind)
+  px(30, 6, 6, 4, hair); px(33, 10, 5, 12, hair); px(34, 22, 4, 10, hair); px(35, 32, 2, 6, hair);
+  // shoulders / jacket
+  px(8, 38, 30, 18, jacket); px(6, 42, 34, 14, jacket); px(19, 38, 8, 18, suit); px(20, 38, 6, 3, skin);
+  px(8, 44, 4, 12, jacketDk); px(34, 44, 4, 12, jacketDk); px(12, 40, 4, 2, '#d4a83a'); // insignia
+  // neck + face
+  px(19, 32, 7, 7, skinSh);
+  px(14, 12, 17, 21, skin); px(15, 31, 15, 3, skin); px(14, 26, 2, 5, skinSh);
+  // hair: sleek, centre part, framing strands
+  px(13, 6, 20, 7, hair); px(12, 9, 4, 18, hair); px(29, 9, 4, 10, hair); px(16, 6, 6, 2, hairHi); px(25, 7, 4, 1, hairHi);
+  px(16, 12, 3, 9, hair);
+  // eyes with winged liner, brows, lips
+  px(18, 17, 5, 1, hair); px(25, 17, 4, 1, hair);
+  px(18, 20, 4, 2, '#1a1012'); px(22, 19, 1, 1, '#1a1012'); px(25, 20, 3, 2, '#1a1012'); px(28, 19, 1, 1, '#1a1012');
+  px(19, 20, 1, 1, '#e8f4ff'); px(26, 20, 1, 1, '#e8f4ff');
+  px(22, 23, 2, 3, skinSh); px(21, 28, 5, 1, '#b8404c'); px(22, 29, 3, 1, '#d06070');
+  // headset
+  px(30, 18, 2, 6, '#3a3a44'); px(27, 24, 4, 1, '#3a3a44'); px(26, 24, 1, 2, '#5ad1ff');
+  // tablet glow in hand
+  px(2, 48, 10, 8, '#0b2a33'); px(3, 49, 8, 6, '#5ad1ff'); px(10, 47, 4, 4, '#1a1a1f');
+  return outline(c);
 }
 
 function backdrop(img, w, levels = 12, darken = 0.92) {
@@ -231,8 +325,8 @@ function backdrop(img, w, levels = 12, darken = 0.92) {
 }
 
 export async function loadArt() {
-  const [surface, dirt, ...rest] = await Promise.all([
-    load('assets/surface.jpg'), load('assets/dirt.jpg'),
+  const [surface, dirt, portraitImg, ...rest] = await Promise.all([
+    load('assets/surface.jpg'), load('assets/dirt.jpg'), load('assets/lidia_portrait.png'),
     ...ROOM_KEYS.map(k => load(`assets/room_${k}.jpg`)),
     ...Object.values(CAST).map(c => load(`assets/${c.file}`)),
   ]);
@@ -245,6 +339,7 @@ export async function loadArt() {
   });
   // A red-washed copy of the survivor for the "needs Jav" state.
   art.chars.survivorRed = Object.fromEntries(Object.entries(art.chars.survivor).map(([k, fr]) => [k, fr.map(f => tinted(f, 'rgba(230,10,10,0.55)'))]));
+  art.portrait = portrait(portraitImg, 120) || drawnPortrait();
   art.surface = backdrop(surface, PX.surfaceW, 10, 0.85);
   art.dirt = backdrop(dirt, PX.dirt, 8, 0.45);
   ROOM_KEYS.forEach((k, i) => { art.rooms[k] = rooms[i] ? pixelize(downsample(rooms[i], PX.roomW, PX.roomH), 12, 0.95) : null; });

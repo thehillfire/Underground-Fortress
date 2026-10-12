@@ -16,7 +16,7 @@ Everything runs on an Android phone, billed to your **Claude subscription**. Cla
 3. `fortress login`, then type `/login` inside Claude and pick your Claude account (Pro/Max), **not** an API key. Type `/exit` when done.
 4. `fortress`: Chrome opens the game. ⋮ → **Add to Home screen** installs it as an app.
 
-Later: `fortress` to play, `fortress update` to update, `fortress mock` to try it without using Claude. SETUP → *Claude account* confirms you are on the subscription, and warns if an `ANTHROPIC_API_KEY` would bill per token instead. While the fortress runs, Termux holds a wake-lock so Android doesn't put the survivors to sleep. If the SDK's bundled Claude binary won't start on your phone, set `FORTRESS_CLAUDE_PATH=$(command -v claude)` inside Ubuntu.
+Later: `fortress` to play, `fortress update` to update, `fortress mock` to try it without using Claude. SETUP → *Claude account* confirms you are on the subscription. The fortress strips `ANTHROPIC_API_KEY` from its environment, so it can never bill per token. While the fortress runs, Termux holds a wake-lock so Android doesn't put the survivors to sleep. If the SDK's bundled Claude binary won't start on your phone, set `FORTRESS_CLAUDE_PATH=$(command -v claude)` inside Ubuntu.
 
 ## Run it on a computer
 
@@ -33,13 +33,14 @@ You need Node 20+ and Claude Code authentication on this machine, either a logge
 | Thing | How it works |
 |---|---|
 | **Dwellers / rooms** | `+ DWELLER` or click the dashed "Excavate room" slot. Each one is an Agent SDK session (resumed across turns) in its own workspace folder or a connected repo. Four room types: workshop, archive, reactor, bio lab. |
-| **Lidia** | Reviews every finished turn against your **standing orders** and **precedents** (questions you answered before). She chooses one of three things: *continue* (sends the next instruction), *done*, or *escalate*, which turns the dweller red. Talk to her directly to relay orders, change policy, or open new rooms. |
+| **Lidia** | Tap her for a dialogue scene with her briefing, report board and texting. She runs her own Claude session with fortress tools: roster, read any agent's log, message agents, create agents and rooms, set an agent's model, hand agents data files, stop agents, update orders. She also reviews every finished turn against your **standing orders** and **precedents** (questions you answered before). She chooses one of three things: *continue* (sends the next instruction), *done*, or *escalate*, which turns the dweller red. Talk to her directly to relay orders, change policy, or open new rooms. |
 | **Red `!`** | Either Lidia needs a decision, or a dweller asks permission for a risky tool. Answer in the dweller's panel. Lidia remembers your answer. |
 | **Repos** | `owner/repo` or any git URL, cloned with your git credentials and assignable to any room. |
 | **Connectors** | MCP servers, given to every dweller. There's a quick-add shelf, a search over the official MCP registry ("any app"), and custom http/sse/stdio servers with an optional bearer token. |
 | **Skills** | The finder shallow-clones skill repos (default `anthropics/skills`, add your own in Settings), searches `SKILL.md` files, and installs to `~/.claude/skills`, so every dweller gets them. |
 | **Voice** | Press `M` or the MIC button. Start with "Lidia, …" or a dweller's name to address them. Lidia talks back (browser TTS). Needs Chrome/Edge/Safari speech recognition. |
 | **World** | Drag to pan, wheel or pinch to zoom, click anyone to open their panel. `L` opens Lidia, `Esc` closes. |
+| **Ledger** | Tap the gold $ in the top bar to see what this month's work would have cost at API list prices, next to your plan's price ($200 for Max 20x). Broken down by survivor and Lidia, with a month-end pace. The real extra charge on your subscription is $0. |
 | **Settings** | Dweller model, Lidia's model, permission mode, max automatic nudges before Lidia asks you, voice on/off. |
 
 ## Limits worth knowing

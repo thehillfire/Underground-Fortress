@@ -1,8 +1,18 @@
-// Lidia: captain of the fortress. Reviews every finished turn and talks to Jav.
-import { oneShot } from './agent.js';
+// Lidia: captain of the fortress.
+//  - review(): every agent reports to her when a turn ends; she decides what's next.
+//  - chat():   Jav texts her. She runs a persistent session whose only tools are
+//              the fortress controls below, so she can actually run the place.
+import fs from 'node:fs';
+import path from 'node:path';
+import { z } from 'zod';
+import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { oneShot, runCaptain, mockTools } from './agent.js';
 import { store } from './store.js';
+import * as sessions from './sessions.js';
 
-const PERSONA = `You are Lidia, captain of an underground fortress. Every dweller below you is a Claude Code session doing real software and knowledge work for Jav, the fortress owner. Every session reports to you. You are decisive, brief and practical. You never invent facts about the work; you only use what the reports say.`;
+export const MODELS = ['', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'];
+
+const PERSONA = `You are Lidia, captain of an underground survivor bunker in a zombie apocalypse. Every agent below you is a Claude Code session doing real work for Jav, the owner of the fortress. Agents only talk to you when they finish a turn and report. You are sharp, warm with Jav, decisive, and brief: you text like a person, 1-4 short sentences, no headings or bullet walls unless Jav asks for detail. You never invent facts about the work; check the roster or an agent's log before reporting on it.`;
 
 function extractJson(text) {
   const start = text.indexOf('{');
@@ -22,14 +32,75 @@ function transcript(s, n = 14) {
   return s.log.slice(-n).map(e => `[${e.role}${e.tool ? ':' + e.tool : ''}] ${String(e.text).slice(0, 600)}`).join('\n');
 }
 
+const find = (name) => {
+  const n = String(name || '').toLowerCase();
+  return store.state.sessions.find(s => s.name.toLowerCase() === n) || store.state.sessions.find(s => s.name.toLowerCase().startsWith(n));
+};
+const ok = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
+const fail = (msg) => ({ content: [{ type: 'text', text: msg }], isError: true });
+
+// ------------------------------------------------------------------ captain's tools
+const TOOLS = [
+  tool('fortress_status', 'Roster of every agent: status, room, model, goal, last report, open question, API-equivalent spend.', {}, async () => {
+    const st = store.state;
+    return ok({
+      agents: st.sessions.map(s => ({
+        name: s.name, status: s.status, activity: s.activity, room: s.roomType, model: s.model || st.settings.model || 'default',
+        goal: s.goal, waitingOnJav: s.pendingQuestion || (s.pendingPermission ? `permission for ${s.pendingPermission.tool}` : null),
+        lastReport: [...s.log].reverse().find(e => e.role === 'claude')?.text?.slice(0, 400) || null,
+        spentUsd: +(s.costUsd || 0).toFixed(3),
+      })),
+      repos: st.repos.filter(r => r.status === 'ready').map(r => r.name),
+      standingOrders: st.standingOrders,
+    });
+  }),
+  tool('read_agent', "Read an agent's recent transcript (their work, tool calls and reports).",
+    { name: z.string(), lines: z.number().int().min(1).max(80).optional() },
+    async ({ name, lines }) => { const s = find(name); return s ? ok(transcript(s, lines || 30)) : fail(`No agent named ${name}`); }),
+  tool('message_agent', 'Send an instruction to an agent. If they are mid-task it is queued. If they were waiting on Jav, this counts as Jav\'s answer.',
+    { name: z.string(), text: z.string() },
+    async ({ name, text }) => {
+      const s = find(name); if (!s) return fail(`No agent named ${name}`);
+      sessions.send(s.id, text, s.pendingQuestion ? 'jav-via-lidia' : 'lidia');
+      return ok(`Sent to ${s.name}.`);
+    }),
+  tool('create_agent', 'Dig a new room and move in a new agent (a fresh Claude Code session).',
+    { name: z.string(), goal: z.string(), roomType: z.enum(['workshop', 'library', 'server', 'lab']).optional(),
+      model: z.string().optional(), repo: z.string().optional().describe('name of a connected repository') },
+    async ({ name, goal, roomType, model, repo }) => {
+      const r = repo ? store.state.repos.find(x => x.name.toLowerCase().includes(repo.toLowerCase())) : null;
+      const s = sessions.create({ name, goal, roomType, model: model || '', repoId: r?.id || null, by: 'lidia' });
+      return ok(`${s.name} moved into a new ${s.roomType}${r ? ` on ${r.name}` : ''} and started on: ${goal}`);
+    }),
+  tool('set_model', `Change which Claude model an agent uses from their next turn. Options: ${MODELS.filter(Boolean).join(', ')} (or "" for default).`,
+    { name: z.string(), model: z.string() },
+    async ({ name, model }) => { const s = find(name); if (!s) return fail(`No agent named ${name}`); sessions.update(s.id, { model }); return ok(`${s.name} now runs on ${model || 'the default model'}.`); }),
+  tool('provide_data', "Hand an agent data: saved as a file in their workspace and they're told where it is.",
+    { name: z.string(), title: z.string(), content: z.string() },
+    async ({ name, title, content }) => {
+      const s = find(name); if (!s) return fail(`No agent named ${name}`);
+      const file = sessions.provideData(s.id, title, content);
+      return ok(`Saved for ${s.name} at ${file}.`);
+    }),
+  tool('stop_agent', "Interrupt an agent's current turn.", { name: z.string() },
+    async ({ name }) => { const s = find(name); if (!s) return fail(`No agent named ${name}`); sessions.stop(s.id); return ok(`${s.name} stopped.`); }),
+  tool('set_standing_orders', 'Replace the standing orders you use to judge reports. Only when Jav changes policy.', { text: z.string() },
+    async ({ text }) => { store.state.standingOrders = text; store.changed(); return ok('Standing orders updated.'); }),
+];
+const TOOL_NAMES = TOOLS.map(t => t.name);
+for (const t of TOOLS) mockTools[t.name] = (args) => t.handler(args, {});
+let server = null;
+const captainServer = () => (server ||= createSdkMcpServer({ name: 'fortress', version: '1.0.0', tools: TOOLS }));
+
+// ------------------------------------------------------------------ reviewing reports
 /**
- * A session just finished a turn. Decide: continue (with an instruction),
- * done, or escalate to Jav (session turns red with "!").
+ * An agent just finished a turn and reports. Decide: continue (with an instruction),
+ * done, or escalate to Jav (agent turns red with "!").
  */
 export async function review(s, result) {
   const prompt = `${briefing()}
 
-SESSION REPORTING: "${s.name}" (room: ${s.roomType})
+AGENT REPORTING: "${s.name}" (room: ${s.roomType})
 GOAL: ${s.goal || '(no explicit goal; follow Jav\'s latest message)'}
 AUTOMATIC NUDGES SO FAR IN A ROW: ${s.autoTurns}
 
@@ -39,13 +110,14 @@ ${transcript(s)}
 FINAL REPORT OF THIS TURN:
 ${String(result).slice(0, 4000)}
 
-Decide what this session does next. Reply with ONLY a JSON object, one of:
-{"decision":"continue","instruction":"<exact next instruction to the session>","note":"<5-12 word summary for Jav>"}
+Decide what this agent does next. Reply with ONLY a JSON object, one of:
+{"decision":"continue","instruction":"<exact next instruction to the agent>","note":"<5-12 word summary for Jav>"}
 {"decision":"done","note":"<5-12 word summary for Jav>"}
 {"decision":"escalate","question":"<the specific question Jav must answer>","note":"<5-12 word summary>"}
 
-Rules: choose "continue" only when the next step clearly follows from the goal, standing orders or precedents. Choose "done" when the goal is met. Choose "escalate" whenever the session asks a question you cannot answer from the orders/precedents, the work is ambiguous, risky, or needs Jav's taste or credentials.`;
-  const text = await oneShot({ system: PERSONA, prompt, model: store.state.settings.lidiaModel });
+Rules: choose "continue" only when the next step clearly follows from the goal, standing orders or precedents. Choose "done" when the goal is met. Choose "escalate" whenever the agent asks a question you cannot answer from the orders/precedents, the work is ambiguous, risky, or needs Jav's taste or credentials.`;
+  const { text, costUsd } = await oneShot({ system: PERSONA, prompt, model: store.state.settings.lidiaModel });
+  store.addSpend(costUsd, 'lidia');
   const d = extractJson(text);
   if (!d || !['continue', 'done', 'escalate'].includes(d.decision)) {
     return { decision: 'escalate', question: 'I could not make sense of this report. Please take a look.', note: 'unclear report' };
@@ -54,32 +126,24 @@ Rules: choose "continue" only when the next step clearly follows from the goal, 
   return d;
 }
 
-/**
- * Jav talks to Lidia directly. She can reply, update standing orders,
- * relay messages to sessions, and open new rooms.
- */
-export async function chat(text) {
+// ------------------------------------------------------------------ texting Jav
+export async function chat(text, onTool) {
   const st = store.state;
-  const roster = st.sessions.map(s =>
-    `- ${s.name} [${s.status}] room=${s.roomType} goal=${(s.goal || '-').slice(0, 120)}${s.pendingQuestion ? ` WAITING ON JAV: ${s.pendingQuestion}` : ''}`
-  ).join('\n') || '(no dwellers yet)';
-  const history = st.lidiaChat.slice(-16).map(m => `${m.role === 'jav' ? 'Jav' : 'Lidia'}: ${m.text}`).join('\n');
+  const reports = (st.reports || []).slice(-12).map(r => `- ${r.name}: ${r.decision} — ${r.note || ''}`).join('\n') || '(none yet)';
   const prompt = `${briefing()}
 
-FORTRESS ROSTER:
-${roster}
+LATEST REPORTS YOU HANDLED:
+${reports}
 
-CONVERSATION SO FAR:
-${history}
+Jav says: ${text}`;
+  const system = `${PERSONA}
 
-Jav says: ${text}
-
-Reply with ONLY a JSON object:
-{"reply":"<what you say to Jav, spoken aloud, 1-3 sentences>",
- "standingOrders":"<OPTIONAL full replacement of standing orders, only if Jav changed policy>",
- "dispatch":[{"session":"<exact session name>","message":"<instruction to relay>"}],
- "newSession":{"name":"<short name>","goal":"<goal>","roomType":"workshop|library|server|lab"}}
-Omit optional keys you don't need. Only dispatch to sessions in the roster. Only create a session if Jav asked for one.`;
-  const raw = await oneShot({ system: PERSONA, prompt, model: st.settings.lidiaModel });
-  return extractJson(raw) || { reply: raw || 'Copy that.' };
+You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, create agents (each gets a room), change an agent's model, hand agents data, stop agents, and update your standing orders. Use them; don't just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
+  const out = await runCaptain({ prompt, resume: st.lidiaSessionId, model: st.settings.lidiaModel, system,
+    server: captainServer(), toolNames: TOOL_NAMES, onTool });
+  if (out.sessionId) st.lidiaSessionId = out.sessionId;
+  store.addSpend(out.costUsd, 'lidia');
+  return out.text || 'Copy that.';
 }
+
+export function dataDir(cwd) { const d = path.join(cwd, '.fortress', 'data'); fs.mkdirSync(d, { recursive: true }); return d; }

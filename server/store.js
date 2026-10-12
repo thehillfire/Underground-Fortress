@@ -23,6 +23,11 @@ const DEFAULT_STATE = {
   repos: [],
   connectors: [],
   lidiaChat: [],     // Jav <-> Lidia conversation
+  lidiaSessionId: null,
+  reports: [],       // every report Lidia handled
+  // "What you would have spent": API list-price cost of all work, run on the subscription.
+  spend: { total: 0, lidia: 0, months: {} },
+  plan: { name: 'Claude Max 20x', monthlyUsd: 200 },
   precedents: [],    // questions Jav answered, so Lidia learns
   feed: [],          // fortress-wide event ticker
 };
@@ -35,7 +40,8 @@ class Store extends EventEmitter {
     let loaded = {};
     try { loaded = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}
     this.state = { ...structuredClone(DEFAULT_STATE), ...loaded,
-      settings: { ...DEFAULT_STATE.settings, ...(loaded.settings || {}) } };
+      settings: { ...DEFAULT_STATE.settings, ...(loaded.settings || {}) },
+      spend: { ...DEFAULT_STATE.spend, ...(loaded.spend || {}) } };
     // Anything that was mid-turn when the server stopped is idle now.
     for (const s of this.state.sessions) {
       if (s.status === 'working' || s.status === 'reporting') s.status = 'idle';
@@ -57,6 +63,23 @@ class Store extends EventEmitter {
 
   session(id) { return this.state.sessions.find(s => s.id === id); }
 
+  /** Record what a turn would have cost at API prices. `who` = session id or 'lidia'. */
+  addSpend(usd, who) {
+    if (!usd) return;
+    const sp = this.state.spend;
+    const month = new Date().toISOString().slice(0, 7);
+    const m = (sp.months[month] ||= { total: 0, lidia: 0, agents: {} });
+    sp.total += usd; m.total += usd;
+    if (who === 'lidia') { sp.lidia += usd; m.lidia += usd; }
+    else m.agents[who] = (m.agents[who] || 0) + usd;
+    this.changed();
+  }
+
+  report(r) {
+    this.state.reports.push({ ts: Date.now(), ...r });
+    if (this.state.reports.length > 100) this.state.reports.shift();
+  }
+
   feed(text, kind = 'info', sessionId = null) {
     this.state.feed.push({ ts: Date.now(), text, kind, sessionId });
     if (this.state.feed.length > 200) this.state.feed.splice(0, this.state.feed.length - 200);
@@ -70,6 +93,7 @@ class Store extends EventEmitter {
       ...st,
       sessions: st.sessions.map(s => ({ ...s, log: s.log.slice(-300) })),
       lidiaChat: st.lidiaChat.slice(-100),
+      reports: st.reports.slice(-30),
       feed: st.feed.slice(-50),
     };
   }

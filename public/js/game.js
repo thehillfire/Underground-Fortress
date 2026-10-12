@@ -2,7 +2,7 @@
 import { art } from './assets.js';
 
 export const ROOM_W = 480, ROOM_H = 270, SHAFT_W = 96, SLAB = 22, TOP = 70;
-const CHAR_H = 100, LIDIA_H = 108; // on-screen heights; sprites scale by whole pixels to about this
+const CHAR_H = 100, LIDIA_H = 92; // Lidia is petite // on-screen heights; sprites scale by whole pixels to about this
 const ZOMBIE_Y = -12;
 
 const ROOM_TINT = { workshop: '#3b3a3f', library: '#38353a', server: '#2c3138', lab: '#2b3533', command: '#3d2f31' };

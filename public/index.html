@@ -47,6 +47,37 @@
   <div id="transcript"></div>
   <div id="toasts"></div>
 
+  <section id="talk" hidden>
+    <div class="talk-bg"></div>
+    <canvas id="talk-portrait"></canvas>
+    <div class="talk-dialogue">
+      <div class="nameplate">CPT. LIDIA</div>
+      <div class="talk-text" id="talk-text"></div>
+      <div class="talk-reports" id="talk-reports" hidden></div>
+      <div class="talk-choices" id="talk-choices">
+        <button data-c="text" class="primary">TEXT HER</button>
+        <button data-c="reports">REPORTS</button>
+        <button data-c="orders">ORDERS</button>
+        <button data-c="leave">LEAVE</button>
+      </div>
+      <div class="talk-next" id="talk-next">&#9660;</div>
+    </div>
+    <div class="talk-chat" id="talk-chat" hidden>
+      <header>
+        <button class="back" data-c="back" aria-label="Back">&lt;</button>
+        <canvas id="talk-avatar" width="40" height="40"></canvas>
+        <div><b>Lidia</b><small id="talk-status">on the bridge</small></div>
+        <button class="small" data-c="leave">CLOSE</button>
+      </header>
+      <div class="bubbles" id="talk-bubbles"></div>
+      <form class="composer" id="talk-form">
+        <textarea id="talk-input" rows="1" placeholder="Text Lidia…"></textarea>
+        <button type="button" class="mic-inline" id="talk-mic"><span class="mic-ico"></span></button>
+        <button type="submit" class="primary">SEND</button>
+      </form>
+    </div>
+  </section>
+
   <nav id="nav">
     <button data-tab="base" class="active"><i class="ico ico-base"></i><span>BASE</span></button>
     <button data-tab="lidia"><i class="ico ico-lidia"></i><span>LIDIA</span></button>

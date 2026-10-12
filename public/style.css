@@ -151,3 +151,62 @@ body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-in
 @media (max-width: 899px) {
   body.sheet-open #mic, body.sheet-open #ticker, body.sheet-open #controls { display: none; }
 }
+
+/* ---- Lidia: dialogue scene + texting */
+#talk { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; }
+#talk[hidden] { display: none; }
+.talk-bg { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 30%, rgba(80,8,10,0.55), rgba(5,4,6,0.92) 70%);
+  backdrop-filter: blur(2px); }
+#talk-portrait { position: absolute; left: 50%; bottom: calc(var(--safe-b) + 236px); transform: translateX(-50%); image-rendering: pixelated;
+  max-height: calc(100dvh - 300px); filter: drop-shadow(0 0 18px rgba(255,40,30,0.35)); animation: breathe 2.4s steps(2) infinite; }
+@keyframes breathe { 50% { transform: translate(-50%, -3px); } }
+.talk-dialogue { position: absolute; left: 10px; right: 10px; bottom: calc(var(--safe-b) + 12px); min-height: 214px; background: #0b0a0d;
+  border: 3px solid #d8d4cc; box-shadow: 0 0 0 3px #0b0a0d, inset 0 0 0 2px #3a0d10; padding: 22px 14px 12px; }
+.nameplate { position: absolute; top: -16px; left: 12px; background: #9a1420; color: #ffe3dc; font-family: var(--pixel); font-size: 12px;
+  padding: 5px 10px; border: 2px solid #d8d4cc; }
+.talk-text { font-size: 24px; line-height: 1.12; min-height: 82px; white-space: pre-wrap; }
+.talk-next { position: absolute; right: 14px; bottom: 8px; color: var(--accent2); animation: pulse 0.8s steps(2) infinite; font-size: 14px; }
+.talk-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.talk-choices button { min-height: 46px; }
+.talk-reports { max-height: 38dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 4px 0 6px; }
+.rep { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; background: var(--panel2); border: 2px solid var(--line);
+  padding: 6px 8px; font-size: 19px; text-align: left; font-family: "VT323", monospace; min-height: 0; box-shadow: none; }
+.rep i { width: 14px; height: 14px; display: block; }
+.rep .d-continue { background: var(--accent2); } .rep .d-done { background: var(--green); } .rep .d-escalate { background: var(--red); }
+.rep small { color: var(--muted); font-size: 16px; }
+
+.talk-chat { position: absolute; inset: 0; display: flex; flex-direction: column; background: #0a090c; }
+.talk-chat[hidden] { display: none; }
+.talk-chat header { display: flex; align-items: center; gap: 10px; padding: calc(var(--safe-t) + 8px) 10px 8px; border-bottom: 2px solid #2a0d10; background: #0d0b0f; }
+.talk-chat header div { flex: 1; display: flex; flex-direction: column; line-height: 1; }
+.talk-chat header b { font-family: var(--pixel); font-size: 13px; font-weight: 400; color: #ffd9d2; }
+.talk-chat header small { font-size: 17px; color: var(--green); }
+.talk-chat .back { min-width: 40px; }
+#talk-avatar { width: 40px; height: 40px; image-rendering: pixelated; border: 2px solid #9a1420; background: #1a0b0e; }
+.bubbles { flex: 1; overflow-y: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: 8px;
+  background: repeating-linear-gradient(0deg, #0a090c 0 22px, #0c0b0e 22px 23px); }
+.bub { max-width: 82%; padding: 7px 11px; font-size: 21px; line-height: 1.1; white-space: pre-wrap; word-break: break-word; position: relative; }
+.bub.jav { align-self: flex-end; background: #1f3a28; border: 2px solid #2f6a44; }
+.bub.lidia { align-self: flex-start; background: #2a0e12; border: 2px solid #7a1420; }
+.bub time { display: block; font-size: 14px; color: var(--muted); margin-top: 2px; text-align: right; }
+.bub .acts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.bub .acts span { font-size: 15px; background: #3a1418; color: var(--accent2); padding: 0 6px; border: 1px solid #5a1a20; }
+.bub.report { align-self: center; max-width: 92%; background: #121116; border: 2px dashed var(--line); font-size: 18px; color: var(--muted); }
+.typing { align-self: flex-start; background: #2a0e12; border: 2px solid #7a1420; padding: 8px 12px; }
+.typing span { display: inline-block; width: 6px; height: 6px; background: #ffd9d2; margin: 0 2px; animation: dot 1s steps(2) infinite; }
+.typing span:nth-child(2) { animation-delay: 0.33s; } .typing span:nth-child(3) { animation-delay: 0.66s; }
+@keyframes dot { 50% { opacity: 0.2; } }
+.talk-chat .composer { padding: 8px 10px calc(var(--safe-b) + 8px); border-top: 2px solid #2a0d10; background: #0d0b0f; }
+
+/* ---- ledger */
+#stats { cursor: pointer; } #stats u { text-decoration: none; color: var(--accent2); border-bottom: 2px dotted var(--accent2); }
+.ledger-hero { background: #0e0d10; border: 2px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.ledger-hero small { font-family: var(--pixel); font-size: 10px; color: var(--muted); }
+.ledger-hero .big { font-family: var(--pixel); font-size: 34px; color: var(--accent2); text-shadow: 0 0 10px rgba(201,162,39,0.35); }
+.ledger-hero .bar { position: relative; height: 16px; background: #1c1b1f; border: 2px solid var(--line); }
+.ledger-hero .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: repeating-linear-gradient(90deg, var(--accent2) 0 6px, #a8861f 6px 8px); }
+.ledger-sub { justify-content: space-between; font-size: 18px; }
+.ledger-sub .win { color: var(--green); }
+.ledger-row { display: grid; grid-template-columns: 1fr 90px auto; gap: 8px; align-items: center; font-size: 19px; padding: 3px 0; border-bottom: 1px solid #1f1d22; }
+.ledger-row i { height: 10px; background: #7a1420; display: block; }
+.ledger-row b { font-weight: 400; color: var(--accent2); min-width: 64px; text-align: right; }

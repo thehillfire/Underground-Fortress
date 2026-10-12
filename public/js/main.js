@@ -2,6 +2,7 @@
 import { loadArt } from './assets.js';
 import * as game from './game.js';
 import * as voice from './voice.js';
+import * as talk from './talk.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -62,16 +63,23 @@ function close() {
   document.body.classList.remove('sheet-open');
   document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'base'));
 }
+function openLidia(start) {
+  game.select('lidia');
+  document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'lidia'));
+  talk.openTalk(start);
+}
 function openSession(id) { open('session', id); game.focusOn(id, sheetInset()); }
 const sheetInset = () => (innerWidth < 900 ? panel.offsetHeight : 0);
 
 $('#panel-close').onclick = close;
 document.querySelectorAll('#nav [data-tab], #armory-tabs [data-tab]').forEach(b => b.onclick = () => {
   const t = b.dataset.tab;
+  if (t === 'lidia') { close(); return openLidia(); }
   if (b.closest('#nav') && (tab === t || (ARMORY.includes(tab) && b.hasAttribute('data-armory')))) return close();
   open(t);
 });
 $('#btn-new').onclick = () => open('new');
+$('#stats').onclick = () => (tab === 'ledger' ? close() : open('ledger'));
 $('#zoom-in').onclick = () => game.zoomBy(1.2);
 $('#zoom-out').onclick = () => game.zoomBy(1 / 1.2);
 $('#home').onclick = () => game.focusOn('lidia', tab ? sheetInset() : 0);
@@ -95,7 +103,7 @@ $('#home').onclick = () => game.focusOn('lidia', tab ? sheetInset() : 0);
 function mount() {
   const M = {
     session: mountSession, lidia: mountLidia, new: mountNew, repos: mountRepos,
-    connectors: mountConnectors, skills: mountSkills, settings: mountSettings,
+    connectors: mountConnectors, skills: mountSkills, settings: mountSettings, ledger: mountLedger,
   }[tab];
   body.innerHTML = '';
   M?.();
@@ -104,22 +112,27 @@ function mount() {
 // Live parts. Called on every state push.
 function refresh() {
   if (!state) return;
+  talk.update(state);
   renderTopbar();
   renderFeed();
   if (!tab) return;
   ({ session: refreshSession, lidia: refreshLidia, repos: refreshRepos, connectors: refreshConnectors,
-     skills: refreshSkills, new: refreshNew })[tab]?.();
+     skills: refreshSkills, new: refreshNew, ledger: refreshLedger })[tab]?.();
 }
 
 function renderTopbar() {
   const alerts = state.sessions.filter(s => s.status === 'needs_jav').length;
-  const cost = state.sessions.reduce((a, s) => a + (s.costUsd || 0), 0);
-  $('#stats').innerHTML = `${state.sessions.length} alive${alerts ? ` · <b class="red">${alerts}!</b>` : ''}${cost ? ` · $${cost.toFixed(2)}` : ''}${state.mock ? ' · <i>mock</i>' : ''}`;
+  const month = monthSpend();
+  $('#stats').innerHTML = `${state.sessions.length} alive${alerts ? ` · <b class="red">${alerts}!</b>` : ''} · <u>$${month.total.toFixed(2)}</u>${state.mock ? ' · <i>mock</i>' : ''}`;
   document.title = alerts ? `(${alerts}!) Underground Fortress` : 'Underground Fortress';
   const base = $('#nav [data-tab="base"]');
   base.querySelector('.badge')?.remove();
   if (alerts) base.insertAdjacentHTML('beforeend', `<span class="badge">${alerts}</span>`);
 }
+
+const monthKey = () => new Date().toISOString().slice(0, 7);
+const monthSpend = () => state.spend?.months?.[monthKey()] || { total: 0, lidia: 0, agents: {} };
+const money = (v) => `$${v >= 100 ? v.toFixed(0) : v.toFixed(2)}`;
 
 function renderFeed() {
   const item = (f) => `<div class="feed-${esc(f.kind)}" ${f.sessionId ? `data-sid="${esc(f.sessionId)}"` : ''}>${esc(f.text)}</div>`;
@@ -130,6 +143,8 @@ function renderFeed() {
 }
 
 // ---- session
+const MODEL_OPTS = [['', 'Fortress default'], ['opus', 'Opus (latest)'], ['sonnet', 'Sonnet (latest)'], ['haiku', 'Haiku (latest)'],
+  ['claude-opus-5-5', 'Opus 5.5'], ['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-haiku-5-5', 'Haiku 5.5'], ['claude-fable-5-1', 'Fable 5.1']];
 const STATUS_LABEL = { idle: 'Idle', working: 'Working', reporting: 'Reporting to Lidia', needs_jav: 'Needs you', done: 'Done', error: 'Error' };
 
 function mountSession() {
@@ -157,10 +172,11 @@ function mountSessionSettings() {
     <label>Name <input id="ss-name" value="${esc(s.name)}"></label>
     <label>Goal <textarea id="ss-goal" rows="3">${esc(s.goal)}</textarea></label>
     <label>Room <select id="ss-room">${['workshop', 'library', 'server', 'lab'].map(r => `<option ${r === s.roomType ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+    <label>Model <select id="ss-model">${MODEL_OPTS.map(([v, l]) => `<option value="${v}" ${v === (s.model || '') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <label>Repository <select id="ss-repo"><option value="">(own workspace)</option>${state.repos.map(r => `<option value="${r.id}" ${r.id === s.repoId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
     <div class="row"><button id="ss-save" class="primary">Save</button><button id="ss-stop">Stop turn</button><button id="ss-del" class="danger">Evict</button></div>
     <p class="muted">Claude session id: <code>${esc(s.sdkSessionId || '—')}</code></p>`;
-  $('#ss-save').onclick = () => api('PATCH', `/api/sessions/${s.id}`, { name: $('#ss-name').value, goal: $('#ss-goal').value, roomType: $('#ss-room').value, repoId: $('#ss-repo').value || null });
+  $('#ss-save').onclick = () => api('PATCH', `/api/sessions/${s.id}`, { name: $('#ss-name').value, goal: $('#ss-goal').value, roomType: $('#ss-room').value, repoId: $('#ss-repo').value || null, model: $('#ss-model').value });
   $('#ss-stop').onclick = () => api('POST', `/api/sessions/${s.id}/stop`);
   $('#ss-del').onclick = async () => { if (confirm(`Evict ${s.name}? Their room is torn down.`)) { await api('DELETE', `/api/sessions/${s.id}`); close(); } };
 }
@@ -170,7 +186,7 @@ function refreshSession() {
   if (!s) { close(); return; }
   $('#panel-title').textContent = s.name;
   $('#s-head').innerHTML = `<div class="chips"><span class="chip st-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>
-    <span class="chip">${esc(s.roomType)}</span><span class="chip">${esc(s.activity || '')}</span><span class="chip">$${(s.costUsd || 0).toFixed(3)}</span></div>
+    <span class="chip">${esc(s.roomType)}</span><span class="chip">${esc(s.model || 'default model')}</span><span class="chip">${esc(s.activity || '')}</span><span class="chip">would-cost $${(s.costUsd || 0).toFixed(2)}</span></div>
     ${s.goal ? `<p class="goal"><b>Goal:</b> ${esc(s.goal)}</p>` : ''}`;
   let alert = '';
   if (s.pendingPermission) {
@@ -196,37 +212,21 @@ function renderLog(el, log) {
 
 // ---- Lidia
 function mountLidia() {
-  $('#panel-title').textContent = 'Captain Lidia';
+  $('#panel-title').textContent = 'Standing orders';
   body.innerHTML = `
-    <p class="muted">Every dweller reports to Lidia when they finish a turn. She tells them how to continue, or turns them red with a <b class="red">!</b> when she needs you. Talk to her to change orders, relay instructions, or open new rooms.</p>
-    <div id="l-log" class="log"></div>
-    <form id="l-form" class="composer">
-      <textarea id="l-input" rows="1" placeholder="Talk to Lidia…"></textarea>
-      <button type="button" class="mic-inline"><span class="mic-ico"></span></button>
-      <button type="submit" class="primary">SEND</button>
-    </form>
-    <details class="sub" open><summary>Standing orders</summary>
-      <textarea id="l-orders" rows="5"></textarea>
-      <div class="row"><button id="l-save" class="primary">Save orders</button>
-      <label class="inline"><input type="checkbox" id="l-auto"> Autopilot (Lidia answers finished sessions)</label></div>
-    </details>
-    <details class="sub"><summary>What Lidia learned from you</summary><div id="l-prec"></div></details>`;
+    <p class="muted">Lidia judges every report against these orders and your past answers. Text her from the LIDIA tab.</p>
+    <textarea id="l-orders" rows="6"></textarea>
+    <div class="row"><button id="l-save" class="primary">SAVE ORDERS</button>
+      <label class="inline"><input type="checkbox" id="l-auto"> Autopilot</label></div>
+    <p class="muted small">Autopilot on: Lidia answers finished agents herself. Off: they wait for you.</p>
+    <h4>What Lidia learned from you</h4><div id="l-prec"></div>`;
   $('#l-orders').value = state.standingOrders;
   $('#l-auto').checked = state.settings.lidiaAutopilot;
   $('#l-auto').onchange = (e) => api('PATCH', '/api/settings', { lidiaAutopilot: e.target.checked });
-  $('#l-save').onclick = () => api('PUT', '/api/orders', { text: $('#l-orders').value });
-  const form = $('#l-form'), input = $('#l-input');
-  form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = ''; api('POST', '/api/lidia', { text: t }).catch(err => toast(err.message)); };
-  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); form.requestSubmit(); } };
-  $('.mic-inline', form).onclick = () => startMic();
+  $('#l-save').onclick = () => api('PUT', '/api/orders', { text: $('#l-orders').value }).then(() => toast('Orders saved'));
 }
 function refreshLidia() {
-  const el = $('#l-log');
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  el.innerHTML = state.lidiaChat.map(m => `<div class="msg m-${m.role}"><span class="who">${m.role === 'jav' ? 'Jav' : 'Lidia'}</span><div>${esc(m.text)}${m.acts?.length ? `<div class="acts">→ ${esc(m.acts.join(' · '))}</div>` : ''}</div></div>`).join('')
-    || '<p class="muted">Say hello to your captain.</p>';
-  if (atBottom) el.scrollTop = el.scrollHeight;
-  $('#l-prec').innerHTML = state.precedents.slice().reverse().map(p => `<div class="prec"><b>${esc(p.session)}:</b> ${esc(p.question)}<br>→ ${esc(p.answer)}</div>`).join('') || '<p class="muted">Nothing yet. Answer a red dweller and it shows up here.</p>';
+  $('#l-prec').innerHTML = state.precedents.slice().reverse().map(p => `<div class="prec"><b>${esc(p.session)}:</b> ${esc(p.question)}<br>→ ${esc(p.answer)}</div>`).join('') || '<p class="muted">Nothing yet. Answer a red agent and it shows up here.</p>';
 }
 
 // ---- new dweller
@@ -362,6 +362,39 @@ function refreshSkills() {
   $('#k-list').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirm(`Remove ${b.dataset.del}?`) && api('DELETE', `/api/skills/${encodeURIComponent(b.dataset.del)}`));
 }
 
+// ---- ledger: what this would have cost at API prices
+const PLANS = [['Claude Pro', 20], ['Claude Max 5x', 100], ['Claude Max 20x', 200]];
+function mountLedger() {
+  $('#panel-title').textContent = 'Ledger';
+  body.innerHTML = `<div id="lg"></div>
+    <label>Your plan <select id="lg-plan">${PLANS.map(([n, v]) => `<option value="${v}" ${state.plan.monthlyUsd === v ? 'selected' : ''}>${n} · $${v}/mo</option>`).join('')}</select></label>
+    <p class="muted small">Every turn is priced by Claude Code at public API list prices, so this is what pay-per-token would have cost you. Your subscription covers it: <b>$0 extra</b>. It counts against your plan's usage limits, not your wallet.</p>`;
+  $('#lg-plan').onchange = (e) => { const [n, v] = PLANS.find(p => p[1] === +e.target.value); api('PUT', '/api/plan', { name: n, monthlyUsd: v }); };
+  refreshLedger();
+}
+function refreshLedger() {
+  const m = monthSpend(), plan = state.plan, now = new Date();
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const pace = m.total / Math.max(1, now.getDate()) * days;
+  const pct = Math.min(100, (m.total / plan.monthlyUsd) * 100);
+  const ahead = m.total - plan.monthlyUsd;
+  const rows = Object.entries(m.agents).map(([id, v]) => [state.sessions.find(s => s.id === id)?.name || 'retired agent', v]);
+  if (m.lidia) rows.push(['Lidia (reviews + chat)', m.lidia]);
+  rows.sort((a, b) => b[1] - a[1]);
+  const top = rows[0]?.[1] || 1;
+  $('#lg').innerHTML = `
+    <div class="ledger-hero">
+      <small>WOULD HAVE COST THIS MONTH</small>
+      <div class="big">${money(m.total)}</div>
+      <div class="bar"><i style="width:${pct}%"></i><b style="left:100%"></b></div>
+      <div class="row ledger-sub"><span>${plan.name} · $${plan.monthlyUsd}/mo</span>
+        <span class="${ahead >= 0 ? 'win' : ''}">${ahead >= 0 ? `+${money(ahead)} ahead · ${(m.total / plan.monthlyUsd).toFixed(1)}× value` : `${pct.toFixed(0)}% of plan price`}</span></div>
+      <div class="muted small">On pace for ~${money(pace)} by month end · ${money(state.spend.total)} all-time</div>
+    </div>
+    <h4>By survivor</h4>
+    ${rows.map(([n, v]) => `<div class="ledger-row"><span>${esc(n)}</span><i style="width:${(v / top) * 100}%"></i><b>${money(v)}</b></div>`).join('') || '<p class="muted">Nothing spent yet this month.</p>'}`;
+}
+
 // ---- settings
 function mountSettings() {
   $('#panel-title').textContent = 'Fortress settings';
@@ -386,10 +419,10 @@ function mountSettings() {
     <p class="muted">${voice.voiceSupported ? 'Tap <b>TALK</b> (or press <kbd>M</kbd> on a keyboard) and speak. Start with “Lidia, …” or a dweller’s name to address them; otherwise it goes to whoever is open.' : 'Your browser has no speech recognition. Use Chrome or Edge.'}</p>`;
   api('GET', '/api/health').then(h => {
     const line = h.mock ? '<b>Mock mode.</b> Survivors are fake; no Claude usage.'
-      : h.apiKey ? '<b class="red">ANTHROPIC_API_KEY is set.</b> Survivors bill your API account per token, not your subscription. Unset it to use your plan.'
-      : h.subscription ? '<b style="color:var(--green)">Signed in with your Claude subscription.</b> No API key in use.'
-      : '<b class="red">Not signed in.</b> On the phone run <code>fortress login</code>, then <code>/login</code> with your Claude account.';
-    $('#g-health').innerHTML = `<div>${line}<div class="muted small">${esc(h.platform)} · node ${esc(h.node)}</div></div>`;
+      : !h.subscription ? '<b class="red">Not signed in.</b> On the phone run <code>fortress login</code>, then <code>/login</code> with your Claude account.'
+      : '<b style="color:var(--green)">Signed in with your Claude subscription.</b> No API key in use.';
+    const stripped = h.apiKeyStripped ? '<div class="small" style="color:var(--accent2)">An API key was set on this device. The fortress ignores it, so nothing bills per token.</div>' : '';
+    $('#g-health').innerHTML = `<div>${line}${stripped}<div class="muted small">${esc(h.platform)} · node ${esc(h.node)}</div></div>`;
   }).catch(() => {});
   $('#g-install').onclick = async () => { installPrompt?.prompt(); await installPrompt?.userChoice; installPrompt = null; mount(); };
   $('#g-form').onsubmit = async (e) => {
@@ -409,10 +442,10 @@ function startMic() {
   voice.listen({
     onInterim: (t) => showTranscript(t),
     onResult: async (t) => {
-      const r = voice.route(t, state.sessions, selected);
+      const r = voice.route(t, state.sessions, talk.isOpen() ? 'lidia' : selected);
       const name = r.to === 'lidia' ? 'Lidia' : state.sessions.find(s => s.id === r.to)?.name;
       showTranscript(`→ ${name}: “${r.text}”`, 3500);
-      if (r.to === 'lidia') { if (tab !== 'lidia') open('lidia'); await api('POST', '/api/lidia', { text: r.text }); }
+      if (r.to === 'lidia') { if (!talk.isOpen()) openLidia('chat'); await talk.send(r.text); }
       else { if (selected !== r.to) openSession(r.to); await api('POST', `/api/sessions/${r.to}/message`, { text: r.text }); }
     },
     onEnd: () => { micBtn.classList.remove('live'); },
@@ -423,8 +456,8 @@ micBtn.onclick = startMic;
 addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea, select')) return;
   if (e.key === 'm' || e.key === 'M') startMic();
-  if (e.key === 'Escape') close();
-  if (e.key === 'l' || e.key === 'L') open('lidia');
+  if (e.key === 'Escape') { if (talk.isOpen()) talk.closeTalk(); else close(); }
+  if (e.key === 'l' || e.key === 'L') openLidia();
 });
 
 let transcriptTimer;
@@ -462,7 +495,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 // ------------------------------------------------------------------ boot
 game.initGame($('#world'), {
   onPick: (hit) => {
-    if (hit.kind === 'lidia') open('lidia');
+    if (hit.kind === 'lidia') openLidia();
     else if (hit.kind === 'session') open('session', hit.id);
     else if (hit.kind === 'dig') open('new');
     else if (hit.kind === 'tab') open(hit.tab);
@@ -470,4 +503,12 @@ game.initGame($('#world'), {
 });
 game.focusOn('lidia');
 close();
+talk.initTalk({
+  api, getState: () => state,
+  openSession: (id) => openSession(id),
+  openOrders: () => open('lidia'),
+  startMic: () => startMic(),
+  speak: (t) => state?.settings.speakLidia && voice.speak(t),
+  onClose: () => { game.select(selected); document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (tab && !['session', 'new'].includes(tab) ? (['repos','connectors','skills'].includes(tab) ? 'connectors' : tab) : 'base'))); },
+});
 loadArt().then(connect);

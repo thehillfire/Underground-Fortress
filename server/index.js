@@ -10,7 +10,8 @@ import * as sessions from './sessions.js';
 import * as skills from './skills.js';
 import * as repos from './repos.js';
 import { CATALOG, searchRegistry, redact } from './connectors.js';
-import { MOCK } from './agent.js';
+import { MOCK, API_KEY_STRIPPED } from './agent.js';
+import { MODELS } from './lidia.js';
 import { ensureAssets } from './assets.js';
 
 const PORT = Number(process.env.PORT || 4321);
@@ -38,7 +39,7 @@ app.get('/api/health', wrap(() => {
   return {
     mock: MOCK,
     subscription,
-    apiKey: !!process.env.ANTHROPIC_API_KEY,
+    apiKeyStripped: API_KEY_STRIPPED,
     platform: `${process.platform}-${process.arch}`,
     node: process.versions.node,
   };
@@ -63,6 +64,14 @@ app.patch('/api/settings', wrap((r) => {
   for (const k of allowed) if (k in r.body) store.state.settings[k] = r.body[k];
   store.changed();
 }));
+
+app.put('/api/plan', wrap((r) => {
+  const usd = Number(r.body.monthlyUsd);
+  if (!(usd > 0)) throw new Error('monthlyUsd must be positive');
+  store.state.plan = { name: String(r.body.name || 'Custom'), monthlyUsd: usd };
+  store.changed();
+}));
+app.get('/api/models', wrap(() => MODELS));
 
 // Repositories
 app.post('/api/repos', wrap((r) => repos.connect(r.body.url)));
