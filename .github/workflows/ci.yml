@@ -46,7 +46,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx --yes @cyclonedx/cyclonedx-npm --omit dev --output-file sbom.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom-cyclonedx
           path: sbom.cdx.json
