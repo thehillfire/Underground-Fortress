@@ -30,6 +30,8 @@ function connect() {
     else if (m.type === 'bubble') {
       game.bubble(m);
     } else if (m.type === 'report') game.report(m.sessionId);
+    else if (m.type === 'visit') game.visit(m.from, m.to);
+    else if (m.type === 'visit-end') game.visitEnd(m.from);
     else if (m.type === 'alert') {
       const s = state?.sessions.find(x => x.id === m.sessionId);
       chime();
@@ -112,7 +114,7 @@ $('#home').onclick = () => game.focusOn('lidia', tab ? sheetInset() : 0);
 // Static part of each panel (forms). Rebuilt only when the tab/selection changes.
 function mount() {
   const M = {
-    session: mountSession, lidia: mountLidia, new: mountNew, repos: mountRepos,
+    session: mountSession, project: mountProject, lidia: mountLidia, new: mountNew, repos: mountRepos,
     connectors: mountConnectors, skills: mountSkills, settings: mountSettings, ledger: mountLedger,
   }[tab];
   body.innerHTML = '';
@@ -129,7 +131,7 @@ function refresh() {
   renderTopbar();
   renderFeed();
   if (!tab) return;
-  ({ session: refreshSession, lidia: refreshLidia, repos: refreshRepos, connectors: refreshConnectors,
+  ({ session: refreshSession, project: refreshProject, lidia: refreshLidia, repos: refreshRepos, connectors: refreshConnectors,
      skills: refreshSkills, new: refreshNew, ledger: refreshLedger })[tab]?.();
 }
 
@@ -195,7 +197,7 @@ function chatRows() {
     const talk = s.log.filter(e => e.role === 'claude' || e.role === 'lidia' || e.role === 'jav');
     const l = talk[talk.length - 1];
     const ask = s.pendingPermission?.kind === 'money' ? `MONEY: wants to run ${s.pendingPermission.reason}` : s.pendingPermission ? `Asks permission: ${s.pendingPermission.tool}` : s.pendingQuestion;
-    rows.push({ id: s.id, name: s.name.toUpperCase(), sub: `${s.roomType} · ${s.model || 'default'}${s.lastReview ? ` · ${s.lastReview.score}/10` : ''} · ${s.status === 'working' ? s.activity : (STATUS_LABEL[s.status] || s.status)}`,
+    rows.push({ id: s.id, name: s.name.toUpperCase(), sub: `${state.projects.find(p => p.id === s.projectId)?.name || ''} · ${s.model || 'default'}${s.lastReview ? ` · ${s.lastReview.score}/10` : ''} · ${s.status === 'working' ? s.activity : (STATUS_LABEL[s.status] || s.status)}`,
       dot: DOT[s.status] || 'grey', rank: RANK[s.status] ?? 2, alert: !!ask,
       last: ask || (l ? `${l.role === 'jav' ? 'You: ' : l.role === 'lidia' ? 'Lidia: ' : ''}${l.text}` : 'No messages yet'),
       ts: s.log[s.log.length - 1]?.ts || s.createdAt, unread: s.log.filter(e => (e.role === 'claude' || e.role === 'lidia') && e.ts > (seen[s.id] || 0)).length });
@@ -318,9 +320,10 @@ function toggleAgentMenu() {
     <p class="muted small">Higher effort thinks longer and uses more of your plan. Takes effect on the next message.</p>
     <h4>Permissions</h4>${chips('permissionMode', PERMS, s.permissionMode)}
     <p class="muted small" id="am-perm-help">${esc(PERM_HELP[s.permissionMode || ''])} Changes apply right away, even mid-turn.</p>
-    <h4>Room</h4>${chips('roomType', [['workshop', 'Workshop'], ['library', 'Archive'], ['server', 'Reactor'], ['lab', 'Bio lab']], s.roomType)}
+    <h4>Project room</h4>
+    <label><select id="am-proj">${state.projects.map(p => `<option value="${p.id}" ${p.id === s.projectId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}<option value="__new">+ New project room…</option></select></label>
+    <p class="muted small">Moving keeps the agent's memory and files; it joins the room's shared folder.</p>
     <label>Name <input id="am-name" value="${esc(s.name)}"></label>
-    <label>Repository <select id="am-repo"><option value="">(own workspace)</option>${state.repos.map(r => `<option value="${r.id}" ${r.id === s.repoId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
     <div class="row am-actions"><button id="am-stop">STOP TURN</button><button id="am-del" class="danger">EVICT</button><button id="am-done" class="primary">DONE</button></div>
   </div>`);
   const m = $('#agent-menu');
@@ -334,7 +337,18 @@ function toggleAgentMenu() {
     api('PATCH', `/api/sessions/${s.id}`, { [g.dataset.opt]: b.dataset.v }).then(() => toast(`${s.name}: ${b.textContent}`));
   });
   $('#am-name').onchange = (e) => api('PATCH', `/api/sessions/${s.id}`, { name: e.target.value });
-  $('#am-repo').onchange = (e) => api('PATCH', `/api/sessions/${s.id}`, { repoId: e.target.value || null });
+  $('#am-proj').onchange = async (e) => {
+    let pid = e.target.value;
+    try {
+      if (pid === '__new') {
+        const name = prompt('Name the new project room', '');
+        if (!name?.trim()) { e.target.value = s.projectId; return; }
+        pid = (await api('POST', '/api/projects', { name: name.trim() })).id;
+      }
+      await api('PATCH', `/api/sessions/${s.id}`, { projectId: pid });
+      toast(`${s.name} moved rooms`);
+    } catch (err) { toast(err.message); e.target.value = s.projectId; }
+  };
   $('#am-stop').onclick = () => { api('POST', `/api/sessions/${s.id}/stop`); m.remove(); };
   $('#am-del').onclick = async () => { if (confirm(`Evict ${s.name}? Their room is torn down.`)) { m.remove(); await api('DELETE', `/api/sessions/${s.id}`); close(); } };
   $('#am-done').onclick = () => m.remove();
@@ -423,32 +437,91 @@ function refreshLidia() {
   $('#l-prec').innerHTML = state.precedents.slice().reverse().map(p => `<div class="prec"><b>${esc(p.session)}:</b> ${esc(p.question)}<br>→ ${esc(p.answer)}</div>`).join('') || '<p class="muted">Nothing yet. Answer a red agent and it shows up here.</p>';
 }
 
-// ---- new dweller
+// ---- new agent (into an existing project, or a new project room)
+const ROOMS = [['workshop', 'Workshop'], ['library', 'Archive'], ['server', 'Reactor'], ['lab', 'Bio lab'], ['hall', 'Ops hall'], ['garage', 'Garage'], ['vault', 'Vault']];
+let newInProject = '';   // preselected project when adding from a room
 function mountNew() {
-  $('#panel-title').textContent = 'Excavate room';
+  $('#panel-title').textContent = 'New agent';
+  const pre = newInProject; newInProject = '';
   body.innerHTML = `
-    <p class="muted">Every dweller is a full Claude Code session with its own room. Their workspace is their own folder, or a repository you connected.</p>
+    <p class="muted">A project is a room. Every agent is a full Claude Code session working in a project; agents in the same project share its folder or repository.</p>
     <form id="n-form" class="stack">
-      <label>Name <input id="n-name" placeholder="e.g. Builder" required></label>
+      <label>Name <input id="n-name" placeholder="e.g. Lead Scout" required></label>
       <label>First task / goal <textarea id="n-goal" rows="4" placeholder="What should they work on? Leave empty to brief them later."></textarea></label>
-      <label>Room <select id="n-room"><option value="workshop">Workshop (building)</option><option value="library">Library (research)</option><option value="server">Server room (ops)</option><option value="lab">Laboratory (experiments)</option></select></label>
-      <label>Repository <select id="n-repo"></select></label>
-      <button class="primary" type="submit">⛏ Dig room &amp; move in</button>
+      <label>Project <select id="n-proj">${state.projects.map(p => `<option value="${p.id}" ${p.id === pre ? 'selected' : ''}>${esc(p.name)} (${members(p.id).length})</option>`).join('')}
+        <option value="" ${pre ? '' : 'selected'}>+ New project room…</option></select></label>
+      <div id="n-newproj" class="stack">
+        <label>Project name <input id="n-pname" placeholder="e.g. Lead Generation"></label>
+        <label>Room <select id="n-room">${ROOMS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
+        <label>Repository <select id="n-repo"></select></label>
+      </div>
+      <label>Permissions <select id="n-perm">${PERMS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
+      <button class="primary" type="submit">⛏ Move in</button>
     </form>`;
+  const sync = () => { $('#n-newproj').hidden = !!$('#n-proj').value; };
+  $('#n-proj').onchange = sync; sync();
   $('#n-form').onsubmit = async (e) => {
     e.preventDefault();
-    const s = await api('POST', '/api/sessions', { name: $('#n-name').value, goal: $('#n-goal').value, roomType: $('#n-room').value, repoId: $('#n-repo').value || null });
-    // The socket update may land after this; don't let the panel think the dweller is gone.
-    if (!state.sessions.some(x => x.id === s.id)) { state.sessions.push(s); game.setState(state); }
-    openSession(s.id);
+    const perm = $('#n-perm').value;
+    if (perm === 'bypassPermissions' && !confirm('Let this agent run any command without asking? Payments stay blocked by the money gate.')) return;
+    const body = { name: $('#n-name').value, goal: $('#n-goal').value, permissionMode: perm };
+    if ($('#n-proj').value) body.projectId = $('#n-proj').value;
+    else if ($('#n-pname').value.trim()) Object.assign(body, { project: $('#n-pname').value.trim(), roomType: $('#n-room').value, repoId: $('#n-repo').value || null });
+    else Object.assign(body, { roomType: $('#n-room').value, repoId: $('#n-repo').value || null });
+    try {
+      const s = await api('POST', '/api/sessions', body);
+      // The socket update may land after this; don't let the panel think the agent is gone.
+      if (!state.sessions.some(x => x.id === s.id)) { state.sessions.push(s); game.setState(state); }
+      openSession(s.id);
+    } catch (err) { toast(err.message); }
   };
   refreshNew();
 }
 function refreshNew() {
   const sel = $('#n-repo'); if (!sel || document.activeElement === sel) return;
   const v = sel.value;
-  sel.innerHTML = `<option value="">(own workspace)</option>` + state.repos.filter(r => r.status === 'ready').map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  sel.innerHTML = `<option value="">(own folder)</option>` + state.repos.filter(r => r.status === 'ready').map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
   sel.value = v;
+}
+
+// ---- project room: who works here, and the room's settings
+const members = (pid) => state.sessions.filter(s => s.projectId === pid);
+let projectSel = null;
+function openProject(pid) { projectSel = pid; open('project'); game.select(`p:${pid}`); game.flyToProject(pid, sheetInset()); }
+function mountProject() {
+  body.innerHTML = `<div id="p-head"></div><div id="p-members" class="stack"></div>
+    <button id="p-add" class="primary">+ ADD AGENT TO THIS ROOM</button>
+    <h4>Room</h4><div class="opt-chips" id="p-room"></div>
+    <label>Name <input id="p-name"></label>
+    <label>Project goal <textarea id="p-goal" rows="2" placeholder="What this project is for (every agent here sees it)"></textarea></label>
+    <label>Repository <select id="p-repo"></select></label>
+    <button id="p-del" class="danger">CLOSE ROOM</button>`;
+  const p = state.projects.find(x => x.id === projectSel);
+  if (!p) return close();
+  $('#p-name').value = p.name; $('#p-goal').value = p.goal || '';
+  $('#p-repo').innerHTML = `<option value="">(own folder)</option>` + state.repos.filter(r => r.status === 'ready').map(r => `<option value="${r.id}" ${r.id === p.repoId ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
+  const patch = (b) => api('PATCH', `/api/projects/${p.id}`, b).catch(err => toast(err.message));
+  $('#p-name').onchange = (e) => patch({ name: e.target.value });
+  $('#p-goal').onchange = (e) => patch({ goal: e.target.value });
+  $('#p-repo').onchange = (e) => patch({ repoId: e.target.value || null });
+  $('#p-room').onclick = (e) => { const b = e.target.closest('[data-v]'); if (b) patch({ roomType: b.dataset.v }); };
+  $('#p-add').onclick = () => { newInProject = p.id; open('new'); };
+  $('#p-del').onclick = async () => {
+    if (members(p.id).length) return toast('Move or evict its agents first (⋮ on each agent).');
+    if (confirm(`Close the ${p.name} room?`)) { await api('DELETE', `/api/projects/${p.id}`); close(); }
+  };
+  refreshProject();
+}
+function refreshProject() {
+  const p = state.projects.find(x => x.id === projectSel);
+  if (!p) return close();
+  $('#panel-title').textContent = p.name;
+  const ms = members(p.id);
+  $('#p-head').innerHTML = `<p class="muted">${ms.length ? `${ms.length} agent${ms.length > 1 ? 's' : ''} working here, sharing one folder.` : 'Nobody works here yet.'}</p>`;
+  $('#p-members').innerHTML = ms.map(s => `<button class="card member" data-sid="${s.id}"><b>${esc(s.name)}</b>
+    <span class="chip st-${esc(s.status)}">${STATUS_LABEL[s.status] || esc(s.status)}</span><span class="muted small">${esc(s.goal || '').slice(0, 90)}</span></button>`).join('');
+  $('#p-members').querySelectorAll('[data-sid]').forEach(b => b.onclick = () => openSession(b.dataset.sid));
+  $('#p-room').innerHTML = ROOMS.map(([v, l]) => `<button type="button" data-v="${v}" class="${v === p.roomType ? 'on' : ''}">${l}</button>`).join('');
 }
 
 // ---- repos
@@ -463,7 +536,7 @@ function mountRepos() {
 function refreshRepos() {
   $('#r-list').innerHTML = state.repos.map(r => `<div class="card"><div><b>${esc(r.name)}</b> <span class="chip st-${r.status === 'ready' ? 'done' : r.status === 'error' ? 'needs_jav' : 'working'}">${esc(r.status)}</span>
     <div class="muted small">${esc(r.url)}</div>${r.error ? `<pre>${esc(r.error)}</pre>` : ''}
-    <div class="muted small">Rooms: ${esc(state.sessions.filter(s => s.repoId === r.id).map(s => s.name).join(', ') || 'none')}</div></div>
+    <div class="muted small">Projects: ${esc(state.projects.filter(p => p.repoId === r.id).map(p => p.name).join(', ') || 'none')}</div></div>
     <button data-del="${r.id}" class="danger small">Disconnect</button></div>`).join('') || '<p class="muted">No repositories yet.</p>';
   $('#r-list').querySelectorAll('[data-del]').forEach(b => b.onclick = () => api('DELETE', `/api/repos/${b.dataset.del}`));
 }
@@ -891,12 +964,15 @@ game.initGame($('#world'), {
   onPick: (hit) => {
     if (hit.kind === 'lidia') openLidia();
     else if (hit.kind === 'session') open('session', hit.id);
+    else if (hit.kind === 'project') openProject(hit.id);
     else if (hit.kind === 'dig') open('new');
     else if (hit.kind === 'tab') open(hit.tab);
   },
 });
 game.focusOn('lidia');
 close();
+// Hooks for the screenshot tests (only with ?debug in the address).
+if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { __open: open, __openProject: openProject, __cam: game.lookAt, __zoom: game.zoomBy });
 bindCopy();
 talk.initTalk({
   api, getState: () => state,

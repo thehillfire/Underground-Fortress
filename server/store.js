@@ -23,6 +23,7 @@ const DEFAULT_STATE = {
     reserveAt: 85,                // pause self-improvement when session/weekly usage passes this %
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
+  projects: [],      // rooms; each holds any number of agents
   sessions: [],
   repos: [],
   connectors: [],

@@ -363,3 +363,8 @@ code.inline { background: #1c1b1f; padding: 0 4px; color: #ffd27a; font-size: 0.
 .ico-cam, .ico-clip { width: 22px; height: 22px; }
 .msg .who { flex-wrap: wrap; }
 .plan-text { max-height: 40vh; overflow-y: auto; background: #0e0d10; border: 2px solid var(--line); padding: 8px; margin: 6px 0; font-size: 15px; }
+
+/* ---- project rooms */
+.card.member { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; width: 100%; text-align: left; font-family: "VT323", monospace; text-transform: none; letter-spacing: 0; font-size: 19px; padding: 10px 12px; }
+.card.member b { font-family: "Silkscreen", monospace; font-size: 13px; }
+.card.member .small { flex-basis: 100%; }

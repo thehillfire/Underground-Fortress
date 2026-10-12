@@ -7,6 +7,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { store, ROOT, id } from './store.js';
 import * as sessions from './sessions.js';
+import * as projects from './projects.js';
 import * as skills from './skills.js';
 import * as repos from './repos.js';
 import { CATALOG, searchRegistry, redact } from './connectors.js';
@@ -49,8 +50,13 @@ app.get('/api/health', wrap(() => {
   };
 }));
 
+// Projects (rooms) and the agents in them
+app.post('/api/projects', wrap((r) => projects.createProject({ ...r.body, auto: false, by: 'jav' })));
+app.patch('/api/projects/:id', wrap((r) => projects.updateProject(r.params.id, r.body)));
+app.delete('/api/projects/:id', wrap((r) => projects.removeProject(r.params.id)));
+
 // Sessions
-app.post('/api/sessions', wrap((r) => sessions.create(r.body)));
+app.post('/api/sessions', wrap((r) => sessions.create({ ...r.body, by: 'jav' })));
 app.patch('/api/sessions/:id', wrap((r) => sessions.update(r.params.id, r.body)));
 app.delete('/api/sessions/:id', wrap((r) => sessions.remove(r.params.id)));
 app.post('/api/sessions/:id/message', wrap((r) => sessions.send(r.params.id, r.body.text, 'jav', r.body.files || [])));

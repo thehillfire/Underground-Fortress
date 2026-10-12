@@ -1,5 +1,5 @@
 {
-  "_note": "Generated with OpenArt (Seedream 4.5), dark industrial pixel-art style. The server downloads these into public/assets on first start; the client re-pixelates them on load.",
+  "_note": "Generated with OpenArt (Seedream 4.5 and Wan 2.7 Image, styled from the first set), dark industrial pixel-art style. The server downloads these into public/assets on first start; the client re-pixelates them on load and drops any sprite sheet that does not slice cleanly.",
   "room_command.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/021791823142238fd2e0ebdb3eb064cbe39fbfe58bf726316248f_0_1791823150604_7c70c76e.jpeg",
   "room_workshop.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/021791823144024f419ea1e39f9dd10a4a699a297e9c9a1ef6af3_0_1791823151928_579d2ceb.jpeg",
   "room_library.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/0217918231463734d21f3e3e165e25fcf12f86815b4407f4036dd_0_1791823154659_ade9978c.jpeg",
@@ -10,5 +10,14 @@
   "survivor_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791823757976_e9dcbc84_1791823758629_2286b181.png",
   "lidia_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791824405653_1678434e_1791824405880_07194e8c.png",
   "zombie_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791823760645_de7ee2f8_1791823760860_607f2741.png",
-  "lidia_portrait.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791824406920_9011fb2f_1791824407652_c75227c7.png"
+  "lidia_portrait.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791824406920_9011fb2f_1791824407652_c75227c7.png",
+  "npc_scout_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835088_ae063e4e_1791835090948_cb83db26.png",
+  "npc_smith_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835193_9b96d7c8_1791835195541_408a9e91.png",
+  "npc_hacker_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835194_88fabe9b_1791835196875_5bff2fa8.png",
+  "defender_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835196_c94f23bf_1791835198954_8538a150.png",
+  "zombie2_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835202_65c6edfd_1791835204515_e7b3bde9.png",
+  "room_hall.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835199_3db90f39_1791835201904_d564794e.png",
+  "room_garage.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835207_cfb75b8d_1791835209494_99697385.png",
+  "room_vault.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835206_ec40f475_1791835209280_5cac535f.png",
+  "wall.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/1791835211_9230628f_1791835213725_c033ecd5.png"
 }

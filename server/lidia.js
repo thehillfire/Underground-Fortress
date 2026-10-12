@@ -11,6 +11,7 @@ import { store } from './store.js';
 import { mcpServersFor } from './connectors.js';
 import { promptWithFiles } from './files.js';
 import * as sessions from './sessions.js';
+import * as projects from './projects.js';
 import * as skills from './skills.js';
 import { captainScheduleTools, tz } from './schedule.js';
 
@@ -48,8 +49,10 @@ const TOOLS = [
   tool('fortress_status', 'Roster of every agent: status, room, model, goal, last report, open question, API-equivalent spend.', {}, async () => {
     const st = store.state;
     return ok({
+      projects: st.projects.map(p => ({ name: p.name, room: p.roomType, goal: p.goal, repo: st.repos.find(r => r.id === p.repoId)?.name || null,
+        agents: projects.members(p.id).map(s => s.name) })),
       agents: st.sessions.map(s => ({
-        name: s.name, status: s.status, activity: s.activity, room: s.roomType, model: s.model || st.settings.model || 'default',
+        name: s.name, project: projects.project(s.projectId)?.name, status: s.status, activity: s.activity, model: s.model || st.settings.model || 'default',
         goal: s.goal, waitingOnJav: s.pendingQuestion || (s.pendingPermission ? `permission for ${s.pendingPermission.tool}` : null),
         lastReport: [...s.log].reverse().find(e => e.role === 'claude')?.text?.slice(0, 400) || null,
         spentUsd: +(s.costUsd || 0).toFixed(3),
@@ -68,13 +71,37 @@ const TOOLS = [
       sessions.send(s.id, text, s.pendingQuestion ? 'jav-via-lidia' : 'lidia');
       return ok(`Sent to ${s.name}.`);
     }),
-  tool('create_agent', 'Dig a new room and move in a new agent (a fresh Claude Code session).',
-    { name: z.string(), goal: z.string(), roomType: z.enum(['workshop', 'library', 'server', 'lab']).optional(),
-      model: z.string().optional(), repo: z.string().optional().describe('name of a connected repository') },
-    async ({ name, goal, roomType, model, repo }) => {
+  tool('create_project', 'Open a new project room. A project holds any number of agents who share its folder (or repository). Put agents whose work belongs together (e.g. lead scouting and lead outreach) in one project.',
+    { name: z.string(), goal: z.string().optional(), roomType: z.enum(projects.ROOM_TYPES).optional(),
+      repo: z.string().optional().describe('name of a connected repository the project works on') },
+    async ({ name, goal, roomType, repo }) => {
+      if (projects.findProject(name)?.name.toLowerCase() === name.toLowerCase()) return fail(`A project called ${name} already exists.`);
       const r = repo ? store.state.repos.find(x => x.name.toLowerCase().includes(repo.toLowerCase())) : null;
-      const s = sessions.create({ name, goal, roomType, model: model || '', repoId: r?.id || null, by: 'lidia' });
-      return ok(`${s.name} moved into a new ${s.roomType}${r ? ` on ${r.name}` : ''} and started on: ${goal}`);
+      const p = projects.createProject({ name, goal, roomType, repoId: r?.id || null, by: 'lidia' });
+      return ok(`Project room "${p.name}" is open${r ? ` on ${r.name}` : ''}.`);
+    }),
+  tool('create_agent', 'Move a new agent (a fresh Claude Code session) into a project room. Names an existing project, or opens it if it does not exist yet; without a project the agent gets a room of its own.',
+    { name: z.string(), goal: z.string(), project: z.string().optional(), model: z.string().optional(),
+      repo: z.string().optional().describe('only for a brand-new project: a connected repository to work on') },
+    async ({ name, goal, project, model, repo }) => {
+      const r = repo ? store.state.repos.find(x => x.name.toLowerCase().includes(repo.toLowerCase())) : null;
+      const s = sessions.create({ name, goal, project, model: model || '', repoId: r?.id || null, by: 'lidia' });
+      return ok(`${s.name} moved into ${projects.project(s.projectId).name} and started on: ${goal}`);
+    }),
+  tool('move_agent', "Move an agent into another project room (it keeps its memory and files). Open the project first with create_project if it doesn't exist.",
+    { name: z.string(), project: z.string() },
+    async ({ name, project }) => {
+      const s = find(name); if (!s) return fail(`No agent named ${name}`);
+      const p = projects.findProject(project); if (!p) return fail(`No project called ${project}. Create it first.`);
+      sessions.move(s.id, p.id);
+      return ok(`${s.name} is now in ${p.name}.`);
+    }),
+  tool('rename_project', 'Rename a project room, change its room type, or set its goal.',
+    { project: z.string(), name: z.string().optional(), roomType: z.enum(projects.ROOM_TYPES).optional(), goal: z.string().optional() },
+    async ({ project, ...patch }) => {
+      const p = projects.findProject(project); if (!p) return fail(`No project called ${project}.`);
+      projects.updateProject(p.id, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+      return ok(`Project is now "${p.name}" (${p.roomType}).`);
     }),
   tool('set_model', `Change an agent's Claude model and/or effort level from their next turn. Models: ${MODELS.filter(Boolean).join(', ')} (or "" for default). Effort: low, medium, high, xhigh, max (or "" for default); higher effort thinks longer and uses more of Jav's plan.`,
     { name: z.string(), model: z.string().optional(), effort: z.enum(['', 'low', 'medium', 'high', 'xhigh', 'max']).optional() },
@@ -117,7 +144,7 @@ const captainServer = () => (server ||= createSdkMcpServer({ name: 'fortress', v
 export async function review(s, result) {
   const prompt = `${briefing()}
 
-AGENT REPORTING: "${s.name}" (room: ${s.roomType})
+AGENT REPORTING: "${s.name}" (project: ${projects.project(s.projectId)?.name || 'none'})
 GOAL: ${s.goal || '(no explicit goal; follow Jav\'s latest message)'}
 AUTOMATIC NUDGES SO FAR IN A ROW: ${s.autoTurns}
 
@@ -156,7 +183,7 @@ ${reports}
 Jav says: ${text}`;
   const system = `${PERSONA}
 
-You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, create agents (each gets a room), change an agent's model, hand agents data, stop agents, and update your standing orders.
+You have full control of the fortress through your tools: check the roster, read any agent's log, message agents, organise the fortress into project rooms (each project holds several agents who share its folder; group related agents together), create agents in a project, move agents between projects, change an agent's model, hand agents data, stop agents, and update your standing orders.
 Arm your agents: check list_skills, and when work needs design, frontend, testing, planning, debugging or review, make sure the right skills are installed (find_skills / install_skills) and tell the agent which to use.
 Your agents are business owners. They improve their own work and review each other automatically; you decide direction, unblock them, and keep Jav informed.
 Schedules: Jav's timezone is ${tz()}. The fortress is the scheduler (there is no cron on this phone): use schedule_task / list_schedules / cancel_schedule for anything at a time or recurring.

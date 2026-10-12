@@ -31,11 +31,12 @@ const CLAUDE_PATH = process.env.FORTRESS_CLAUDE_PATH ? { pathToClaudeCodeExecuta
 export async function runTurn(opts) {
   if (MOCK) return mockTurn(opts);
   const { prompt, cwd, resume, model, permissionMode, mcpServers, appendSystem,
-          onInit, onText, onTool, canUseTool, abortController, hooks, effort, onQuery } = opts;
+          onInit, onText, onTool, canUseTool, abortController, hooks, effort, onQuery, additionalDirectories } = opts;
   const q = query({
     prompt: asInput(prompt),
     options: {
       cwd,
+      additionalDirectories: additionalDirectories?.length ? additionalDirectories : undefined,
       resume: resume || undefined,
       model: model || undefined,
       effort: effort || undefined,

@@ -40,6 +40,6 @@ export function connect(url) {
 export function disconnect(rid) {
   const st = store.state;
   st.repos = st.repos.filter(r => r.id !== rid);
-  for (const s of st.sessions) if (s.repoId === rid) s.repoId = null;
+  for (const p of st.projects || []) if (p.repoId === rid) p.repoId = null;
   store.changed(); // the clone stays on disk; delete workspaces/repos/<name> to reclaim it
 }

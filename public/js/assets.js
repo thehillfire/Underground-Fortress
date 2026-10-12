@@ -6,18 +6,29 @@
 // The slicer finds frames by looking for empty gaps, so slightly irregular
 // AI-generated grids still work. Missing files fall back to a drawn pixel cast.
 
-const ROOM_KEYS = ['command', 'workshop', 'library', 'server', 'lab'];
-export const art = { rooms: {}, chars: {}, surface: null, dirt: null };
+const ROOM_FILES = {
+  command: 'room_command.jpg', workshop: 'room_workshop.jpg', library: 'room_library.jpg', server: 'room_server.jpg',
+  lab: 'room_lab.jpg', hall: 'room_hall.png', garage: 'room_garage.png', vault: 'room_vault.png',
+};
+const ROOM_KEYS = Object.keys(ROOM_FILES);
+export const art = { rooms: {}, chars: {}, cast: [], surface: null, dirt: null, wall: null };
 
 // Pixel grid sizes (in art pixels). The game draws these at 3x.
-export const PX = { roomW: 240, roomH: 135, charH: 30, lidiaH: 26, zombieH: 30, surfaceW: 640, dirt: 64 };
+export const PX = { roomW: 240, charH: 30, lidiaH: 26, zombieH: 30, surfaceW: 640, dirt: 64 };
 
-// name -> sheet file, rows (animation names), target height
+// name -> sheet file, rows (animation names), target height, and a palette for the drawn stand-in
 const CAST = {
   survivor: { file: 'survivor_sheet.png', anims: ['walk', 'work', 'panic'], h: PX.charH },
   lidia:    { file: 'lidia_sheet.png',    anims: ['walk', 'idle', 'command'], h: PX.lidiaH },
   zombie:   { file: 'zombie_sheet.png',   anims: ['walk', 'idle'], h: PX.zombieH },
+  scout:    { file: 'npc_scout_sheet.png',  anims: ['walk', 'work', 'panic'], h: PX.charH, pal: 'scout' },
+  smith:    { file: 'npc_smith_sheet.png',  anims: ['walk', 'work', 'panic'], h: PX.charH, pal: 'smith' },
+  hacker:   { file: 'npc_hacker_sheet.png', anims: ['walk', 'work', 'panic'], h: PX.charH, pal: 'hacker' },
+  defender: { file: 'defender_sheet.png',   anims: ['shoot', 'push'], h: PX.charH, pal: 'defender' },
+  zombie2:  { file: 'zombie2_sheet.png',    anims: ['walk', 'attack', 'hit'], h: PX.zombieH, pal: 'zombie2' },
 };
+// Agents are drawn as one of these characters (picked per agent).
+const AGENT_CAST = ['survivor', 'scout', 'smith', 'hacker'];
 
 function load(src) {
   return new Promise((resolve) => {
@@ -136,6 +147,8 @@ function sliceSheet(img, rowNames, targetH) {
     });
   });
 
+  // A generated sheet that didn't come out as a clean grid is rejected (the drawn stand-in is used).
+  if (raw.some(frames => frames.length < 3 || frames.length > 12)) throw new Error(`bad grid: ${raw.map(f => f.length).join('/')} frames per row`);
   // One scale for the whole sheet so the character never changes size between frames.
   const heights = raw.flat().map(f => f.bot - f.top).sort((a, b) => a - b);
   const refH = heights[Math.floor(heights.length * 0.75)] || 1;
@@ -169,13 +182,20 @@ const PAL = {
   survivor: { coat: '#cfcac0', coat2: '#8e8a82', pants: '#3b3a40', skin: '#d6b39a', hair: '#d8b31f', boot: '#151317', acc: '#e8e3a0' },
   lidia:    { coat: '#8a1a1c', coat2: '#4f0d10', pants: '#1c1a1f', skin: '#e0bfa8', hair: '#121014', boot: '#0c0a0d', acc: '#5ad1ff' },
   zombie:   { coat: '#4d5244', coat2: '#2f332a', pants: '#3a3030', skin: '#7f9a74', hair: '#2a2620', boot: '#1d1a1a', acc: '#e6f2c8', blood: '#6a0d0d' },
+  scout:    { coat: '#4f5a35', coat2: '#343d22', pants: '#2b2a2e', skin: '#e2bea6', hair: '#b8401c', boot: '#151317', acc: '#7a6a4a' },
+  smith:    { coat: '#6a4a2c', coat2: '#4a3220', pants: '#3a3a40', skin: '#c99a7a', hair: '#3a2a20', boot: '#151317', acc: '#9ad0e0' },
+  hacker:   { coat: '#18181e', coat2: '#0e0e12', pants: '#2c3446', skin: '#6b4a34', hair: '#1a1410', boot: '#d8d8d8', acc: '#3aff7a' },
+  defender: { coat: '#2f3330', coat2: '#1d201e', pants: '#2a2c2a', skin: '#c9a48a', hair: '#4a4d48', boot: '#0f0f10', acc: '#8a8f86' },
+  zombie2:  { coat: '#8a8f86', coat2: '#5d625a', pants: '#5d625a', skin: '#93a38a', hair: '#1c1a16', boot: '#3a3632', acc: '#f2f6d8', blood: '#7a0d0d' },
 };
 
 function person(kind, anim, i) {
   const c = canvas(16, 24), g = c.getContext('2d');
   const P = PAL[kind];
   const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
-  const zombie = kind === 'zombie';
+  const zombie = kind === 'zombie' || kind === 'zombie2';
+  if (anim === 'attack') anim = 'idle';
+  if (anim === 'shoot' || anim === 'push') return gunner(P, anim, i);
   const ph = (i / 6) * Math.PI * 2;
   const step = anim === 'walk' ? Math.round(Math.sin(ph) * 2) : 0;
   const bob = anim === 'walk' ? (i % 3 === 0 ? 0 : 1) : (anim === 'idle' || anim === 'work') ? (i % 6 < 3 ? 0 : 1) : 0;
@@ -193,7 +213,7 @@ function person(kind, anim, i) {
   const hx = 6 + hunch + (zombie ? 1 : 0), hy = 3 + bob + (zombie ? 1 : 0);
   px(hx, hy, 5, 5, P.skin);
   px(hx + 3, hy + 2, 1, 1, zombie ? P.acc : '#111');
-  if (kind === 'survivor') { px(hx - 1, hy - 1, 7, 2, P.hair); px(hx + 5, hy, 1, 1, P.acc); }
+  if (!zombie && kind !== 'lidia') { px(hx - 1, hy - 1, 7, 2, P.hair); px(hx + 5, hy, 1, 1, P.acc); }
   else if (kind === 'lidia') { px(hx - 1, hy - 1, 6, 2, P.hair); px(hx - 1, hy + 1, 1, 3, P.hair); px(hx + 4, hy + 3, 2, 1, '#333'); }
   else { px(hx, hy - 1, 3, 1, P.hair); px(hx + 1, hy + 4, 3, 1, P.blood); }
   // arms
@@ -213,6 +233,30 @@ function person(kind, anim, i) {
     const sw = anim === 'walk' ? Math.round(-Math.sin(ph) * 2) : 0;
     px(ax + sw, ay, 2, 7, P.coat2); px(ax + sw, ay + 7, 2, 1, P.skin);
     if (kind === 'lidia' && anim === 'idle') px(ax + 2, ay + 3, 3, 2, P.acc); // tablet glow
+  }
+  return outline(c);
+}
+
+/** Wall defender with a rifle: firing (muzzle flash on beats) or shoving with the stock. 22x24. */
+function gunner(P, anim, i) {
+  const c = canvas(22, 24), g = c.getContext('2d');
+  const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  const kick = anim === 'shoot' && i % 3 === 1 ? 1 : 0;              // recoil
+  const lunge = anim === 'push' ? [0, 1, 3, 3, 1, 0][i % 6] : 0;
+  const x0 = 4 - kick + lunge;
+  px(x0 + 1, 17, 2, 6, P.pants); px(x0 + 4, 17, 2, 6, P.pants);     // braced legs
+  px(x0, 22, 3, 2, P.boot); px(x0 + 4, 22, 3, 2, P.boot);
+  px(x0, 9, 7, 9, P.coat); px(x0, 12, 7, 2, P.coat2);                // vest
+  px(x0 + 1, 3, 5, 6, P.skin); px(x0 + 4, 5, 1, 1, '#111');          // head
+  px(x0, 2, 7, 2, '#3c4238'); px(x0 + 1, 1, 5, 1, '#3c4238');        // helmet
+  px(x0 + 1, 7, 5, 2, '#5a1a1a');                                     // bandana
+  if (anim === 'shoot') {
+    px(x0 + 4, 11, 11, 2, '#141416'); px(x0 + 3, 12, 3, 3, '#3a2a1c'); // rifle + stock
+    px(x0 + 6, 13, 2, 2, P.skin);
+    if (i % 3 === 1) { px(x0 + 15, 10, 3, 4, '#ffd04a'); px(x0 + 17, 11, 2, 2, '#fff2b0'); }
+  } else {
+    px(x0 + 5, 9, 2, 8, '#141416'); px(x0 + 6, 8 + (lunge > 1 ? 0 : 1), 4, 3, '#3a2a1c'); // rifle held up, stock forward
+    px(x0 + 7, 11, 2, 2, P.skin);
   }
   return outline(c);
 }
@@ -266,7 +310,7 @@ function drawnCast(kind) {
   }
   const names = CAST[kind].anims;
   const anims = {};
-  for (const a of names) anims[a] = Array.from({ length: 6 }, (_, i) => person(kind, a, i));
+  for (const a of names) anims[a] = Array.from({ length: 6 }, (_, i) => person(CAST[kind].pal || kind, a, i));
   return anims;
 }
 
@@ -324,24 +368,31 @@ function backdrop(img, w, levels = 12, darken = 0.92) {
   return pixelize(downsample(img, w, h), levels, darken);
 }
 
+const redWash = (anims) => Object.fromEntries(Object.entries(anims).map(([k, fr]) => [k, fr.map(f => tinted(f, 'rgba(230,10,10,0.55)'))]));
+
 export async function loadArt() {
-  const [surface, dirt, portraitImg, ...rest] = await Promise.all([
-    load('assets/surface.jpg'), load('assets/dirt.jpg'), load('assets/lidia_portrait.png'),
-    ...ROOM_KEYS.map(k => load(`assets/room_${k}.jpg`)),
+  const [surface, dirt, portraitImg, wallImg, ...rest] = await Promise.all([
+    load('assets/surface.jpg'), load('assets/dirt.jpg'), load('assets/lidia_portrait.png'), load('assets/wall.png'),
+    ...ROOM_KEYS.map(k => load(`assets/${ROOM_FILES[k]}`)),
     ...Object.values(CAST).map(c => load(`assets/${c.file}`)),
   ]);
   const rooms = rest.slice(0, ROOM_KEYS.length), sheets = rest.slice(ROOM_KEYS.length);
   Object.keys(CAST).forEach((kind, i) => {
     let anims = null;
-    if (sheets[i]) { try { anims = sliceSheet(sheets[i], CAST[kind].anims, CAST[kind].h); } catch (e) { console.warn('sheet', kind, e); } }
+    if (sheets[i]) { try { anims = sliceSheet(sheets[i], CAST[kind].anims, CAST[kind].h); } catch (e) { console.warn('sheet', kind, e.message); } }
     if (!anims || Object.values(anims).some(f => !f.length)) anims = drawnCast(kind);
     art.chars[kind] = anims;
   });
-  // A red-washed copy of the survivor for the "needs Jav" state.
-  art.chars.survivorRed = Object.fromEntries(Object.entries(art.chars.survivor).map(([k, fr]) => [k, fr.map(f => tinted(f, 'rgba(230,10,10,0.55)'))]));
+  // Every agent is one of these characters; each has a red-washed copy for the "needs Jav" state.
+  art.cast = AGENT_CAST.map(k => ({ kind: k, anims: art.chars[k], red: redWash(art.chars[k]) }));
+  art.chars.survivorRed = art.cast[0].red;
   art.portrait = portrait(portraitImg, 120) || drawnPortrait();
+  art.wall = portrait(wallImg, 60);
   art.surface = backdrop(surface, PX.surfaceW, 10, 0.85);
   art.dirt = backdrop(dirt, PX.dirt, 8, 0.45);
-  ROOM_KEYS.forEach((k, i) => { art.rooms[k] = rooms[i] ? pixelize(downsample(rooms[i], PX.roomW, PX.roomH), 12, 0.95) : null; });
+  ROOM_KEYS.forEach((k, i) => {
+    const img = rooms[i];
+    art.rooms[k] = img ? pixelize(downsample(img, PX.roomW, Math.round(PX.roomW * img.naturalHeight / img.naturalWidth)), 12, 0.95) : null;
+  });
   return art;
 }

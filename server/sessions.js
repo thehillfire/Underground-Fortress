@@ -10,12 +10,12 @@ import { peakUsage, refreshSoon } from './usage.js';
 import { agentScheduleServer, tz } from './schedule.js';
 import { saveUploads, promptWithFiles, fileMeta } from './files.js';
 import { DATA_DIR } from './store.js';
+import { project, projectDir, members, findProject, createProject, pruneEmpty, migrate } from './projects.js';
 import * as lidia from './lidia.js';
 import { mcpServersFor } from './connectors.js';
 
 export const events = new EventEmitter(); // bubbles/animations for the browser
 
-const ROOM_TYPES = ['workshop', 'library', 'server', 'lab'];
 const running = new Map();       // session id -> AbortController
 const permissionWaiters = new Map(); // permission id -> resolve
 
@@ -31,14 +31,26 @@ function setStatus(s, status, activity = s.activity) {
   store.changed();
 }
 
+migrate();
+
+/**
+ * Where an agent's turns run. A conversation can only be resumed from the folder it
+ * started in, so an agent keeps that folder after it moves; the new project's folder
+ * is added to its workspace instead (see projectExtraDirs).
+ */
 export function cwdFor(s) {
-  if (s.repoId) {
-    const repo = store.state.repos.find(r => r.id === s.repoId);
-    if (repo?.status === 'ready') return repo.path;
-  }
-  const dir = path.join(WORKSPACES, s.id);
+  if (s.cwd && s.sdkSessionId && fs.existsSync(s.cwd)) return s.cwd;
+  const p = project(s.projectId);
+  const dir = p ? projectDir(p) : path.join(WORKSPACES, s.id);
   fs.mkdirSync(dir, { recursive: true });
+  s.cwd = dir;
   return dir;
+}
+
+function projectExtraDirs(s) {
+  const p = project(s.projectId);
+  const dir = p && projectDir(p);
+  return dir && dir !== cwdFor(s) ? [dir] : [];
 }
 
 function activityFor(tool) {
@@ -51,16 +63,26 @@ function activityFor(tool) {
   return tool;
 }
 
-export function create({ name, goal = '', roomType, repoId = null, model = '', by = 'jav' }) {
+/**
+ * A new agent. It joins `projectId`, or the project named `project` (opened if it
+ * doesn't exist yet); with neither, it gets a room of its own.
+ */
+export function create({ name, goal = '', projectId, project: projectName, roomType, repoId = null, model = '', effort = '', permissionMode = '', by = 'jav' }) {
   const st = store.state;
+  name = (name || `Dweller ${st.sessions.length + 1}`).slice(0, 40);
+  let p = projectId ? project(projectId) : null;
+  if (!p && projectName) p = findProject(projectName) || createProject({ name: projectName, roomType, repoId, by });
+  if (!p) p = createProject({ name, goal, roomType, repoId, auto: true, by });
   const s = {
     id: id('s'),
-    name: (name || `Dweller ${st.sessions.length + 1}`).slice(0, 40),
+    name,
     goal,
-    roomType: ROOM_TYPES.includes(roomType) ? roomType : ROOM_TYPES[st.sessions.length % ROOM_TYPES.length],
-    repoId,
+    projectId: p.id,
     hue: Math.floor(Math.random() * 360),
+    look: Math.floor(Math.random() * 1000),   // which character they are
     model,                 // '' = fortress default
+    effort,
+    permissionMode: PERMISSION_MODES.includes(permissionMode) ? permissionMode : '',
     sdkSessionId: null,
     status: 'idle',
     activity: 'settling in',
@@ -73,7 +95,7 @@ export function create({ name, goal = '', roomType, repoId = null, model = '', b
     createdAt: Date.now(),
   };
   st.sessions.push(s);
-  store.feed(`${by === 'lidia' ? 'Lidia assigned' : 'Jav assigned'} ${s.name} to a new ${s.roomType}.`, 'info', s.id);
+  store.feed(`${by === 'lidia' ? 'Lidia assigned' : 'Jav assigned'} ${s.name} to ${p.name}.`, 'info', s.id);
   if (goal) send(s.id, goal, by);
   return s;
 }
@@ -82,7 +104,24 @@ export function remove(sid) {
   stop(sid);
   const st = store.state;
   st.sessions = st.sessions.filter(s => s.id !== sid);
+  pruneEmpty();
   store.changed();
+}
+
+/** Move an agent into another project room. */
+export function move(sid, projectId) {
+  const s = store.session(sid), p = project(projectId);
+  if (!s || !p) throw new Error('No such agent or project');
+  if (s.projectId === p.id) return s;
+  cwdFor(s);                      // pin the folder its conversation lives in
+  s.projectId = p.id;
+  // Said once, with the next message: the brief alone doesn't beat the habit of its old folder.
+  s.moveNote = `[Fortress: you have moved into the "${p.name}" project room. Its shared folder is ${projectDir(p)}; your teammates work there. From now on, "your project folder" means that folder: read and write the project's work there.]`;
+  log(s, 'system', `Moved to ${p.name}.`);
+  store.feed(`${s.name} moved into ${p.name}.`, 'info', s.id);
+  pruneEmpty();
+  store.changed();
+  return s;
 }
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
@@ -92,7 +131,8 @@ const modeFor = (s) => s.permissionMode || store.state.settings.permissionMode |
 export function update(sid, patch) {
   const s = store.session(sid);
   if (!s) return null;
-  for (const k of ['name', 'goal', 'roomType', 'repoId', 'model', 'effort']) if (k in patch) s[k] = patch[k];
+  for (const k of ['name', 'goal', 'model', 'effort']) if (k in patch) s[k] = patch[k];
+  if (patch.projectId) move(sid, patch.projectId);
   if ('permissionMode' in patch) {
     const m = patch.permissionMode || '';
     if (m && !PERMISSION_MODES.includes(m)) throw new Error(`unknown permission mode ${m}`);
@@ -148,9 +188,10 @@ async function turn(s, text, from, saved = [], logged = false) {
   let out;
   try {
     out = await runTurn({
-      prompt: promptWithFiles(text, saved),
+      prompt: promptWithFiles(s.moveNote ? `${s.moveNote}\n\n${text}` : text, saved),
       effort: s.effort || store.state.settings.effort || undefined,
       cwd: cwdFor(s),
+      additionalDirectories: projectExtraDirs(s),
       resume: s.sdkSessionId,
       model: s.model || store.state.settings.model,
       permissionMode: modeFor(s),
@@ -176,6 +217,7 @@ async function turn(s, text, from, saved = [], logged = false) {
     queries.delete(s.id);
   }
   if (out.sessionId) s.sdkSessionId = out.sessionId;
+  if (!out.isError) delete s.moveNote;
   s.costUsd += out.costUsd || 0;
   store.addSpend(out.costUsd, s.id);
 
@@ -199,7 +241,12 @@ function drainQueue(s) {
 /** Every agent runs its room like a business it owns. */
 function ownerBrief(s) {
   const skills = installedSkills().map(k => k.name);
-  return `You are "${s.name}", a business owner in Jav's Underground Fortress. Your room is your business${s.goal ? ` and your mission is: ${s.goal}` : ''}.
+  const p = project(s.projectId);
+  const mates = p ? members(p.id).filter(x => x.id !== s.id) : [];
+  const team = p ? `
+PROJECT: you work in the "${p.name}" room${p.goal ? ` (project goal: ${p.goal})` : ''}. Its shared folder is ${projectDir(p)}; keep the project's work there.${mates.length ? `
+Your teammates in this room: ${mates.map(m => `${m.name}${m.goal ? ` (${m.goal.slice(0, 120)})` : ''}`).join('; ')}. You share the folder: build on their files, don't overwrite their work, and leave handoff notes in a NOTES.md there when your work feeds theirs.` : ''}` : '';
+  return `You are "${s.name}", a business owner in Jav's Underground Fortress. Your room is your business${s.goal ? ` and your mission is: ${s.goal}` : ''}.${team}
 Operate like an owner who wants the best possible result:
 - Plan before you act. Execute in small, verified steps. Check your work actually runs or reads well.
 - Critique yourself before reporting: score your output 1-10 on outcome, quality, and how good it looks and reads to a human, and fix the weakest part if you can.
@@ -278,7 +325,8 @@ const reviewing = new Set();   // critics currently out on a review
 /** Pick a fellow owner to do the review: someone not busy, not the owner. */
 function pickCritic(owner) {
   const free = store.state.sessions.filter(x => x.id !== owner.id && !running.has(x.id) && !reviewing.has(x.id));
-  free.sort((a, b) => (a.reviewsGiven || 0) - (b.reviewsGiven || 0));
+  // Teammates know the project best, so they review first.
+  free.sort((a, b) => (b.projectId === owner.projectId) - (a.projectId === owner.projectId) || (a.reviewsGiven || 0) - (b.reviewsGiven || 0));
   return free[0] || null;
 }
 
