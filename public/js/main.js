@@ -826,6 +826,7 @@ function startMic() {
       if (talk.currentPeer() !== r.to) { if (r.to === 'lidia') talk.openChat('lidia'); else openSession(r.to); }
       await talk.send(r.text);
     },
+    onTimeout: (t) => { talk.draft(t); toast(t ? 'The mic stopped after a quiet few minutes. Your words are in the text box.' : 'The mic stopped after a quiet few minutes.'); },
     onEnd: () => voiceBar.ended(),
     onError: (m) => voiceBar.error(m),
   });
@@ -839,7 +840,8 @@ const voiceBar = (() => {
   el.innerHTML = `<div class="vb-top"><span class="vb-dot"></span><span class="vb-to"></span>
       <button class="small" data-vb="cancel">CANCEL</button><button class="small primary" data-vb="send">SEND</button></div>
     <canvas class="vb-waves" width="320" height="56"></canvas>
-    <div class="vb-text"></div>`;
+    <div class="vb-text"></div>
+    <div class="vb-hint">Take your time. I keep listening through pauses; tap SEND when you're done.</div>`;
   document.body.appendChild(el);
   const cv = el.querySelector('canvas'), g = cv.getContext('2d');
   let level = 0, target = 0, raf = 0, hideTimer = 0, t = 0;
@@ -874,20 +876,23 @@ const voiceBar = (() => {
       el.hidden = false; el.classList.remove('err', 'done');
       el.querySelector('.vb-to').textContent = `LISTENING → ${to.toUpperCase()}`;
       el.querySelector('.vb-text').textContent = 'Starting the mic…';
+      el.querySelector('.vb-hint').hidden = false;
       setButtons(true);
       level = 0; target = 0.15;
       if (!raf) draw();
     },
     live() { el.querySelector('.vb-text').textContent = 'Go ahead, I\'m listening…'; },
     level(l) { target = Math.max(target, l); },
-    text(s) { el.querySelector('.vb-text').textContent = s; },
+    text(s) { const t = el.querySelector('.vb-text'); t.textContent = s; t.scrollTop = t.scrollHeight; },
     sent(to, s) {
+      el.querySelector('.vb-hint').hidden = true;
       el.classList.add('done');
       el.querySelector('.vb-to').textContent = `SENT → ${String(to).toUpperCase()}`;
       el.querySelector('.vb-text').textContent = `“${s}”`;
     },
     error(m) {
       el.hidden = false; el.classList.add('err');
+      el.querySelector('.vb-hint').hidden = true;
       el.querySelector('.vb-to').textContent = 'MIC PROBLEM';
       el.querySelector('.vb-text').textContent = m;
       document.body.classList.remove('listening');

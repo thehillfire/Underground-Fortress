@@ -61,6 +61,15 @@ export function initTalk(c) {
 
 export const isOpen = () => !$('#talk').hidden;
 
+/** Put words in the text box without sending (for the mic when nobody tapped SEND). */
+export function draft(text) {
+  const box = $('#talk-input');
+  if (!text || !box || $('#talk').hidden) return;
+  box.value = box.value ? `${box.value} ${text}` : text;
+  box.dispatchEvent(new Event('input'));
+  box.focus();
+}
+
 /** Lidia's live state while she works (null when she's done). */
 export function setLive(l) {
   live = l;

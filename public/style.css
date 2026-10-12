@@ -354,3 +354,8 @@ code.inline { background: #1c1b1f; padding: 0 4px; color: #ffd27a; font-size: 0.
 .asleep-box p, .asleep-box li { margin: 0; font-size: 21px; line-height: 1.15; }
 .asleep-box ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
 .asleep-box .asleep-wait { color: var(--muted); font-size: 18px; }
+
+/* mic bar: long dictation scrolls instead of growing, plus a one-line hint */
+.vb-text { max-height: 26vh; overflow-y: auto; }
+.vb-hint { font-family: var(--pixel); font-size: 9px; line-height: 1.4; color: #b98a84; }
+#voicebar.done .vb-hint, #voicebar.err .vb-hint { display: none; }
