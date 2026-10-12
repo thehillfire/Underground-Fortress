@@ -437,21 +437,95 @@ function mountSettings() {
 const micBtn = $('#mic');
 function startMic() {
   if (voice.isListening()) { voice.stop(); return; }
-  micBtn.classList.add('live');
-  showTranscript('Listening…');
+  const target = talk.isOpen() ? 'Lidia' : (state?.sessions.find(s => s.id === selected)?.name || 'Lidia');
+  voiceBar.open(target);
   voice.listen({
-    onInterim: (t) => showTranscript(t),
+    onStart: () => voiceBar.live(),
+    onSound: (l) => voiceBar.level(l),
+    onInterim: (t) => voiceBar.text(t),
     onResult: async (t) => {
       const r = voice.route(t, state.sessions, talk.isOpen() ? 'lidia' : selected);
       const name = r.to === 'lidia' ? 'Lidia' : state.sessions.find(s => s.id === r.to)?.name;
-      showTranscript(`→ ${name}: “${r.text}”`, 3500);
+      voiceBar.sent(name, r.text);
       if (r.to === 'lidia') { if (!talk.isOpen()) openLidia('chat'); await talk.send(r.text); }
       else { if (selected !== r.to) openSession(r.to); await api('POST', `/api/sessions/${r.to}/message`, { text: r.text }); }
     },
-    onEnd: () => { micBtn.classList.remove('live'); },
-    onError: (e) => { micBtn.classList.remove('live'); showTranscript(`Mic: ${e}`, 4000); },
+    onEnd: () => voiceBar.ended(),
+    onError: (m) => voiceBar.error(m),
   });
 }
+
+/** The listening bar: red, live waves, words as you speak, cancel/send. */
+const voiceBar = (() => {
+  const el = document.createElement('div');
+  el.id = 'voicebar';
+  el.hidden = true;
+  el.innerHTML = `<div class="vb-top"><span class="vb-dot"></span><span class="vb-to"></span>
+      <button class="small" data-vb="cancel">CANCEL</button><button class="small primary" data-vb="send">SEND</button></div>
+    <canvas class="vb-waves" width="320" height="56"></canvas>
+    <div class="vb-text"></div>`;
+  document.body.appendChild(el);
+  const cv = el.querySelector('canvas'), g = cv.getContext('2d');
+  let level = 0, target = 0, raf = 0, hideTimer = 0, t = 0;
+  const N = 32;
+  const draw = () => {
+    level += (target - level) * 0.25;
+    target *= 0.94;                                 // decay unless speech keeps coming
+    t += 0.18;
+    const w = cv.width, h = cv.height, bw = w / N;
+    g.clearRect(0, 0, w, h);
+    for (let i = 0; i < N; i++) {
+      const center = 1 - Math.abs(i - N / 2) / (N / 2);   // taller in the middle
+      const wobble = 0.55 + 0.45 * Math.sin(t * 1.7 + i * 0.9) * Math.cos(t * 0.6 + i * 0.35);
+      const amp = Math.max(0.06, (0.08 + level * 0.92) * (0.35 + 0.65 * center) * wobble);
+      const bh = Math.max(4, Math.round((amp * h) / 4) * 4);       // pixel-stepped
+      g.fillStyle = i % 2 ? '#ff3b2a' : '#ff6a4a';
+      g.fillRect(Math.round(i * bw + 2), Math.round((h - bh) / 2), Math.max(2, Math.round(bw - 4)), bh);
+    }
+    raf = requestAnimationFrame(draw);
+  };
+  el.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-vb]')?.dataset.vb;
+    if (a === 'cancel') { voice.cancel(); hide(0); }
+    if (a === 'send') voice.stop();
+  });
+  const setButtons = (on) => el.querySelectorAll('[data-vb]').forEach(b => { b.hidden = !on; });
+  function hide(after) { clearTimeout(hideTimer); hideTimer = setTimeout(() => { el.hidden = true; cancelAnimationFrame(raf); raf = 0; }, after); }
+  return {
+    open(to) {
+      clearTimeout(hideTimer);
+      document.body.classList.add('listening');
+      el.hidden = false; el.classList.remove('err', 'done');
+      el.querySelector('.vb-to').textContent = `LISTENING → ${to.toUpperCase()}`;
+      el.querySelector('.vb-text').textContent = 'Starting the mic…';
+      setButtons(true);
+      level = 0; target = 0.15;
+      if (!raf) draw();
+    },
+    live() { el.querySelector('.vb-text').textContent = 'Go ahead, I\'m listening…'; },
+    level(l) { target = Math.max(target, l); },
+    text(s) { el.querySelector('.vb-text').textContent = s; },
+    sent(to, s) {
+      el.classList.add('done');
+      el.querySelector('.vb-to').textContent = `SENT → ${String(to).toUpperCase()}`;
+      el.querySelector('.vb-text').textContent = `“${s}”`;
+    },
+    error(m) {
+      el.hidden = false; el.classList.add('err');
+      el.querySelector('.vb-to').textContent = 'MIC PROBLEM';
+      el.querySelector('.vb-text').textContent = m;
+      document.body.classList.remove('listening');
+      setButtons(false);
+      hide(6000);
+    },
+    ended() {
+      document.body.classList.remove('listening');
+      setButtons(false);
+      target = 0;
+      if (!el.classList.contains('err')) hide(el.classList.contains('done') ? 1800 : 600);
+    },
+  };
+})();
 micBtn.onclick = startMic;
 addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea, select')) return;

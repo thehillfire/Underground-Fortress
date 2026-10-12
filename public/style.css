@@ -220,3 +220,21 @@ body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-in
 .gate-box p { margin: 0; font-size: 21px; }
 .gate-box .gate-manual { background: #1c1b1f; border: 2px dashed var(--accent2); padding: 10px; color: var(--text); }
 .gate-box .primary { width: 100%; min-height: 54px; font-size: 14px; }
+
+/* ---- listening: every mic goes red, voice bar slides up */
+body.listening #mic, body.listening .mic-inline { background: #a3170f !important; border-color: var(--red) !important; color: #fff;
+  box-shadow: 0 0 0 3px rgba(255,42,26,0.35), inset -2px -2px 0 #4a0905 !important; animation: pulse 0.6s steps(2) infinite; }
+#voicebar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--nav-h) + var(--safe-b) + 8px); z-index: 50; background: #12060a;
+  border: 3px solid var(--red); box-shadow: 0 0 0 3px #0b0a0d, 0 0 30px rgba(255,40,30,0.45); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+#voicebar[hidden] { display: none; }
+#talk:not([hidden]) ~ #voicebar, body:has(#talk:not([hidden])) #voicebar { bottom: calc(var(--safe-b) + 86px); }
+.vb-top { display: flex; align-items: center; gap: 8px; }
+.vb-to { flex: 1; font-family: var(--pixel); font-size: 11px; color: #ffb0a6; }
+.vb-dot { width: 12px; height: 12px; background: var(--red); animation: pulse 0.6s steps(2) infinite; }
+.vb-waves { width: 100%; height: 56px; image-rendering: pixelated; }
+.vb-text { font-size: 22px; line-height: 1.1; min-height: 24px; color: #fff; }
+#voicebar.done { border-color: var(--green); } #voicebar.done .vb-dot { background: var(--green); animation: none; } #voicebar.done .vb-to { color: #9fe0b0; }
+#voicebar.done .vb-waves { opacity: 0.25; }
+#voicebar.err { border-color: var(--accent2); } #voicebar.err .vb-dot { background: var(--accent2); } #voicebar.err .vb-waves { display: none; }
+#voicebar.err .vb-to { color: var(--accent2); } #voicebar.err .vb-text { font-size: 19px; color: var(--text); }
+@media (min-width: 900px) { #voicebar { left: 50%; right: auto; width: 520px; transform: translateX(-50%); } }
