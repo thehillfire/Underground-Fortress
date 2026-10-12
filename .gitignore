@@ -3,3 +3,5 @@ data/
 workspaces/
 .env
 public/assets/*.jpg
+public/assets/*.png
+public/assets/.sources.json

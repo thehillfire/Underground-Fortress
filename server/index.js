@@ -1,6 +1,8 @@
 // Underground Fortress server: REST + WebSocket on top of the Claude Agent SDK.
 import http from 'node:http';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { store, ROOT, id } from './store.js';
@@ -28,6 +30,19 @@ function snapshot() {
 }
 
 app.get('/api/state', wrap(() => snapshot()));
+
+// Which Claude account will the dwellers run on?
+app.get('/api/health', wrap(() => {
+  const home = os.homedir();
+  const subscription = !!process.env.CLAUDE_CODE_OAUTH_TOKEN || fs.existsSync(path.join(home, '.claude', '.credentials.json'));
+  return {
+    mock: MOCK,
+    subscription,
+    apiKey: !!process.env.ANTHROPIC_API_KEY,
+    platform: `${process.platform}-${process.arch}`,
+    node: process.versions.node,
+  };
+}));
 
 // Sessions
 app.post('/api/sessions', wrap((r) => sessions.create(r.body)));

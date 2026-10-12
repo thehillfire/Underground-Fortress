@@ -2,7 +2,8 @@
 import { art } from './assets.js';
 
 export const ROOM_W = 480, ROOM_H = 270, SHAFT_W = 96, SLAB = 22, TOP = 70;
-const CHAR_H = 120, LIDIA_H = 132; // exactly 3x the pixel-art sprite heights
+const CHAR_H = 100, LIDIA_H = 108; // on-screen heights; sprites scale by whole pixels to about this
+const ZOMBIE_Y = -12;
 
 const ROOM_TINT = { workshop: '#3b3a3f', library: '#38353a', server: '#2c3138', lab: '#2b3533', command: '#3d2f31' };
 const FONT = '"Silkscreen", "VT323", monospace';
@@ -17,6 +18,10 @@ const chars = new Map();       // session id -> entity
 const lidia = { id: 'lidia', x: 0, y: 0, tx: 0, level: 0, dir: -1, bubble: null, t: 0, pause: 0, path: [] };
 let handlers = {};
 let roomRects = [];            // for hit testing
+const zombies = Array.from({ length: 9 }, (_, i) => ({
+  x: -1150 + i * 270 + Math.random() * 120, y: ZOMBIE_Y, dir: Math.random() < 0.5 ? -1 : 1,
+  t: Math.random() * 10, pause: Math.random() * 4, speed: 10 + Math.random() * 14, walking: false,
+}));
 
 // ------------------------------------------------------------------ layout
 function levelTop(level) { return TOP + level * (ROOM_H + SLAB); }
@@ -36,6 +41,8 @@ const doorX = (r) => (r.right ? r.x + 18 : r.x + r.w - 18);
 export function initGame(cv, h) {
   canvas = cv; ctx = cv.getContext('2d'); handlers = h;
   resize(); addEventListener('resize', resize);
+  // Phones: fit one room plus the shaft across the screen.
+  if (cv.clientWidth < 700) cam.zoom = cv.clientWidth / (ROOM_W + SHAFT_W + 60);
   bindInput();
   lidia.x = BRIDGE.x + BRIDGE.w * 0.6; lidia.y = floorY(0); lidia.tx = lidia.x;
   requestAnimationFrame(frame);
@@ -99,10 +106,12 @@ function goHome(e) {
   else e.path = [{ x: 0, level: e.level, shaft: true }, { x: 0, level: r.level, shaft: true }, door, spot];
 }
 
-export function focusOn(id) {
-  if (id === 'lidia') { cam.x = BRIDGE.x + BRIDGE.w / 2; cam.y = BRIDGE.y + ROOM_H / 2; return; }
+/** Center on someone. `insetBottom` (screen px) keeps them above an open bottom sheet. */
+export function focusOn(id, insetBottom = 0) {
+  const shift = insetBottom / 2 / cam.zoom;
+  if (id === 'lidia') { cam.x = BRIDGE.x + BRIDGE.w / 2; cam.y = BRIDGE.y + ROOM_H / 2 + shift; return; }
   const e = chars.get(id);
-  if (e) { cam.x = e.x; cam.y = e.y - ROOM_H / 2 + 20; }
+  if (e) { cam.x = e.x; cam.y = e.y - ROOM_H / 2 + 20 + shift; }
 }
 
 export function zoomBy(f) { cam.zoom = Math.max(0.25, Math.min(2.5, cam.zoom * f)); }
@@ -215,6 +224,16 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   step(lidia, dt, 60);
+  for (const z of zombies) {
+    z.t += dt;
+    z.pause -= dt;
+    if (z.pause > 0) { z.walking = false; continue; }
+    z.walking = true;
+    z.x += z.dir * z.speed * dt;
+    // shamble back and forth, bunching up around the hatch
+    if (Math.abs(z.x) > 1250 || Math.random() < dt * 0.08) { z.dir *= -1; z.pause = 1 + Math.random() * 4; }
+    if (Math.abs(z.x) < 70 && Math.random() < dt * 0.5) { z.dir = -Math.sign(z.x) || 1; z.pause = 2 + Math.random() * 3; }
+  }
   for (const e of chars.values()) {
     const s = e.session;
     const still = s && (s.status === 'done' || s.status === 'needs_jav') && !e.path.length && !e.away;
@@ -239,6 +258,7 @@ function draw(now) {
 
   drawEarth(bottom);
   drawSurface();
+  for (const z of zombies) drawZombie(z, now);
   drawShaft(bottom - 200);
 
   roomRects = [];
@@ -253,12 +273,14 @@ function draw(now) {
     drawDig(slotRect(n));
   }
 
-  drawCharacter(lidia, art.lidia, LIDIA_H, { name: 'CPT. LIDIA', color: '#ff5a4a', now, isLidia: true });
+  const lAnim = lidia.walking ? 'walk' : lidia.bubble && now < lidia.bubble.until ? 'command' : 'idle';
+  drawCharacter(lidia, art.chars.lidia, lAnim, LIDIA_H, { name: 'CPT. LIDIA', color: '#ff5a4a', now, isLidia: true });
   for (const e of chars.values()) {
     const s = e.session;
     if (!s) continue;
     const alert = s.status === 'needs_jav';
-    drawCharacter(e, alert ? art.workerRed : art.worker, CHAR_H, {
+    const anim = alert && !e.walking ? 'panic' : e.walking ? 'walk' : s.status === 'working' ? 'work' : 'rest';
+    drawCharacter(e, alert ? art.chars.survivorRed : art.chars.survivor, anim, CHAR_H, {
       name: s.name.toUpperCase(), color: `hsl(${s.hue},45%,70%)`, now, alert, done: s.status === 'done',
       working: s.status === 'working', activity: s.activity, selected: s.id === selected,
     });
@@ -297,23 +319,84 @@ function drawSurface() {
     ctx.fillStyle = '#07080b'; ctx.fillRect(-4000, -h - 2000, 8000, h + 2000);
     ctx.drawImage(art.surface, -w / 2, -h + 6, w, h);
   } else {
-    const h = 900;
-    ctx.fillStyle = '#07080b'; ctx.fillRect(-4000, -h - 2000, 8000, h + 2000);
-    ctx.fillStyle = '#0d1014'; ctx.fillRect(-4000, -h, 8000, h);
-    ctx.fillStyle = '#5c6670';
-    for (let i = 0; i < 120; i++) ctx.fillRect(-2000 + (i * 977) % 4000, -h + (i * 389) % (h - 200), 4, 4);
-    // tree line silhouettes
-    ctx.fillStyle = '#0a1210';
-    for (let x = -4000; x < 4000; x += 48) { const t = 60 + ((x * 31) % 70 + 70) % 70; ctx.fillRect(x, -40 - t, 40, t); ctx.fillRect(x + 12, -60 - t, 16, 20); }
-    ctx.fillStyle = '#1a221d'; ctx.fillRect(-4000, -40, 8000, 40);
-    // headframe + hatch
+    // Drawn fallback: a ruined city at night, smoke and fire.
+    const h = 900, now = performance.now();
+    const sky = ctx.createLinearGradient(0, -h, 0, 0);
+    sky.addColorStop(0, '#07060a'); sky.addColorStop(0.6, '#1c0a0b'); sky.addColorStop(1, '#3a120c');
+    ctx.fillStyle = '#07060a'; ctx.fillRect(-4000, -h - 2000, 8000, 2000);
+    ctx.fillStyle = sky; ctx.fillRect(-4000, -h, 8000, h);
+    ctx.fillStyle = '#c9c2b0'; ctx.fillRect(820, -h + 120, 36, 36); ctx.fillStyle = '#1c0a0b'; ctx.fillRect(838, -h + 114, 24, 30);
+    // skyline: broken towers with a few lit windows
+    for (let x = -4000, i = 0; x < 4000; i++) {
+      const w = 90 + (i * 37) % 120, bh = 160 + (i * 97) % 300;
+      ctx.fillStyle = i % 2 ? '#0d0b0f' : '#120f14';
+      ctx.fillRect(x, -40 - bh, w, bh);
+      ctx.fillStyle = '#07060a'; ctx.fillRect(x + w * 0.6, -40 - bh, w * 0.4, 20 + (i * 13) % 40); // collapsed corner
+      for (let wy = -40 - bh + 30; wy < -60; wy += 26) for (let wx = x + 10; wx < x + w - 14; wx += 22)
+        if ((wx * 7 + wy * 3 + i) % 23 === 0) { ctx.fillStyle = '#6a3a14'; ctx.fillRect(wx, wy, 8, 10); }
+      x += w + 10;
+    }
+    // smoke columns
+    for (const sx of [-900, 300, 1500]) {
+      for (let k = 0; k < 10; k++) {
+        ctx.fillStyle = `rgba(40,30,30,${0.35 - k * 0.03})`;
+        const o = Math.sin(now / 1500 + k + sx) * 14;
+        ctx.fillRect(sx + o - 20 - k * 4, -120 - k * 40, 40 + k * 8, 40);
+      }
+    }
+    // street, wrecked cars, barricades
+    ctx.fillStyle = '#1b1715'; ctx.fillRect(-4000, -40, 8000, 40);
+    for (const cx of [-1100, -520, 640, 1180]) {
+      ctx.fillStyle = '#2a1e1a'; ctx.fillRect(cx, -70, 110, 30); ctx.fillRect(cx + 20, -92, 60, 24);
+      ctx.fillStyle = '#0a0809'; ctx.fillRect(cx + 10, -44, 22, 8); ctx.fillRect(cx + 78, -44, 22, 8);
+    }
+    for (const bx of [-260, 160]) {
+      ctx.fillStyle = '#4a3420'; for (let k = 0; k < 4; k++) ctx.fillRect(bx, -48 - k * 14, 100, 10);
+      ctx.fillStyle = '#5a5040'; ctx.fillRect(bx + 10, -100, 12, 60); ctx.fillRect(bx + 78, -100, 12, 60);
+    }
+    // burning barrels
+    for (const fx of [-380, 420, 980]) {
+      ctx.fillStyle = '#3a2a22'; ctx.fillRect(fx, -78, 30, 38);
+      const fl = Math.floor(now / 120 + fx) % 3;
+      ctx.fillStyle = '#ff7a1a'; ctx.fillRect(fx + 4, -96 - fl * 3, 22, 20 + fl * 3);
+      ctx.fillStyle = '#ffd04a'; ctx.fillRect(fx + 10, -90 - fl * 2, 10, 12);
+      ctx.fillStyle = 'rgba(255,110,30,0.10)'; ctx.fillRect(fx - 80, -200, 190, 160);
+    }
+    // hatch + headframe
     ctx.fillStyle = '#3a3f46'; ctx.fillRect(-70, -60, 140, 20);
     ctx.fillStyle = '#2a2e33'; ctx.fillRect(-56, -220, 12, 160); ctx.fillRect(44, -220, 12, 160); ctx.fillRect(-56, -228, 112, 12);
-    const on = Math.floor(performance.now() / 600) % 2;
+    const on = Math.floor(now / 600) % 2;
     ctx.fillStyle = on ? '#ff2a1a' : '#4a0a06'; ctx.fillRect(-6, -244, 12, 12);
   }
   ctx.fillStyle = '#0e0c0f';
   ctx.fillRect(-4000, 0, 8000, 10);
+}
+
+/** Seeded blood smears, drips and grime so every room looks like it survived something. */
+function grime(r) {
+  let seed = Math.abs(Math.floor(r.x * 7 + r.y * 13)) + 1;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const snap = (v) => Math.round(v / 3) * 3;
+  // smear on the floor
+  const fx = r.x + 40 + rnd() * (r.w - 140), fy = r.y + r.h - 10;
+  ctx.fillStyle = 'rgba(70,4,6,0.85)';
+  for (let i = 0; i < 14; i++) ctx.fillRect(snap(fx + rnd() * 90), snap(fy - rnd() * 6), 3 + snap(rnd() * 12), 3);
+  // wall splatter with drips
+  if (rnd() < 0.8) {
+    const wx = r.x + 30 + rnd() * (r.w - 80), wy = r.y + 50 + rnd() * (r.h * 0.4);
+    ctx.fillStyle = 'rgba(95,6,8,0.8)';
+    for (let i = 0; i < 10; i++) ctx.fillRect(snap(wx + rnd() * 30 - 15), snap(wy + rnd() * 18 - 9), 3 + snap(rnd() * 6), 3 + snap(rnd() * 3));
+    for (let i = 0; i < 3; i++) ctx.fillRect(snap(wx + rnd() * 24 - 12), snap(wy), 3, 9 + snap(rnd() * 30));
+  }
+  // claw marks
+  if (rnd() < 0.5) {
+    const cx = r.x + 30 + rnd() * (r.w - 60), cy = r.y + 40 + rnd() * 60;
+    ctx.fillStyle = 'rgba(10,8,9,0.75)';
+    for (let k = 0; k < 3; k++) for (let j = 0; j < 8; j++) ctx.fillRect(snap(cx + k * 9 + j * 2), snap(cy + j * 5), 3, 3);
+  }
+  // grime at the base of the walls
+  ctx.fillStyle = 'rgba(20,16,10,0.35)';
+  for (let x = r.x; x < r.x + r.w; x += 6) ctx.fillRect(x, r.y + r.h - 6 - snap(rnd() * 12), 6, 18);
 }
 
 function hazard(x, y, w, h) {
@@ -339,6 +422,17 @@ function drawShaft(bottom) {
   // cables
   ctx.fillStyle = '#0a090b'; ctx.fillRect(-6, 0, 3, bottom); ctx.fillRect(4, 0, 3, bottom);
   for (let l = 0; levelTop(l) < bottom; l++) hazard(-SHAFT_W / 2, levelTop(l) + ROOM_H, SHAFT_W, SLAB);
+  // barricaded hatch at the top of the shaft
+  ctx.save();
+  for (const [dy, rot] of [[-30, -0.12], [-18, 0.1], [-6, -0.05]]) {
+    ctx.save(); ctx.translate(0, dy); ctx.rotate(rot);
+    ctx.fillStyle = '#4a3420'; ctx.fillRect(-SHAFT_W / 2 - 22, -5, SHAFT_W + 44, 10);
+    ctx.fillStyle = '#2c1e12'; ctx.fillRect(-SHAFT_W / 2 - 22, 3, SHAFT_W + 44, 2);
+    ctx.fillStyle = '#8a8a8a'; ctx.fillRect(-SHAFT_W / 2 - 16, -2, 3, 3); ctx.fillRect(SHAFT_W / 2 + 12, -2, 3, 3);
+    ctx.restore();
+  }
+  ctx.fillStyle = 'rgba(95,6,8,0.85)'; ctx.fillRect(-20, -34, 9, 30); ctx.fillRect(-14, -8, 3, 14);
+  ctx.restore();
 }
 
 function drawRoom(r, type, label, hit, glow, now = 0, alert = false) {
@@ -358,6 +452,7 @@ function drawRoom(r, type, label, hit, glow, now = 0, alert = false) {
   const v = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
   v.addColorStop(0, 'rgba(0,0,0,0.35)'); v.addColorStop(0.35, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.25)');
   ctx.fillStyle = v; ctx.fillRect(r.x, r.y, r.w, r.h);
+  grime(r);
   // Grate floor slab
   ctx.fillStyle = '#2b2a2f'; ctx.fillRect(r.x - 10, r.y + r.h, r.w + 20, SLAB);
   ctx.fillStyle = '#18171b';
@@ -424,8 +519,30 @@ function drawDig(r) {
   ctx.restore();
 }
 
-function drawCharacter(e, sprite, h, o) {
-  const bob = e.walking ? (Math.floor(e.t * 8) % 2) * 3 : 0;
+/** Pick the current animation frame and its whole-pixel scale. */
+function pose(anims, anim, t, targetH, fps = 9) {
+  if (!anims) return null;
+  const frames = anims[anim] || anims.walk || Object.values(anims)[0];
+  const f = anim === 'rest' ? frames[0] : frames[Math.floor(t * fps) % frames.length];
+  const S = Math.max(2, Math.round(targetH / f.height));
+  return { f, S, w: f.width * S, h: f.height * S };
+}
+
+function drawZombie(z, now) {
+  const p = pose(art.chars.zombie, z.walking ? 'walk' : 'idle', z.t, 92, z.walking ? 6 : 5);
+  if (!p) return;
+  ctx.save();
+  ctx.translate(Math.round(z.x), z.y);
+  if (z.dir < 0) ctx.scale(-1, 1);
+  ctx.globalAlpha = 0.92;
+  ctx.drawImage(p.f, Math.round(-p.w / 2), -p.h, p.w, p.h);
+  ctx.restore();
+}
+
+function drawCharacter(e, anims, anim, targetH, o) {
+  const p = pose(anims, anim, e.t, targetH, anim === 'panic' ? 12 : 9);
+  const h = p ? p.h : targetH;
+  const bob = 0;
   const x = Math.round(e.x), y = Math.round(e.y);
   ctx.save();
   if (e.inShaft) {
@@ -435,14 +552,9 @@ function drawCharacter(e, sprite, h, o) {
   }
   ctx.fillStyle = o.selected ? 'rgba(216,221,227,0.5)' : 'rgba(0,0,0,0.5)';
   ctx.fillRect(x - 24, y, 48, 4);
-  ctx.translate(x, y - bob);
+  ctx.translate(x, y);
   if (e.dir < 0) ctx.scale(-1, 1);
-  if (sprite) {
-    const w = h * sprite.width / sprite.height;
-    ctx.drawImage(sprite, Math.round(-w / 2), -h, Math.round(w), h);
-  } else {
-    proceduralPerson(h, o);
-  }
+  if (p) ctx.drawImage(p.f, Math.round(-p.w / 2), -p.h, p.w, p.h);
   ctx.restore();
 
   ctx.save();
@@ -469,19 +581,6 @@ function drawCharacter(e, sprite, h, o) {
   ctx.restore();
 
   if (e.bubble && performance.now() < e.bubble.until) drawBubble(x, y - h - (o.alert ? 58 : 28), e.bubble.text, e.bubble.lidia);
-}
-
-function proceduralPerson(h, o) {
-  const u = h / 20; // 20-pixel-tall stick sprite
-  const R = (x, y, w, hh, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x * u), Math.round(-h + y * u), Math.ceil(w * u), Math.ceil(hh * u)); };
-  const coat = o.isLidia ? '#7a1416' : o.alert ? '#a01a12' : '#c8c6c0';
-  R(-3, 16, 2, 4, '#141216'); R(1, 16, 2, 4, '#141216');          // legs
-  R(-4, 7, 8, 10, coat);                                            // body
-  if (!o.isLidia) R(-4, 11, 8, 1, '#4a4850');                        // belt
-  R(-2, 2, 5, 5, '#d9b59a');                                         // head
-  R(-3, 1, 7, 2, o.isLidia ? '#111' : '#d8b31f');                   // hair / hard hat
-  R(1, 4, 1, 1, '#111');                                             // eye
-  R(4, 9, 2, 5, coat);                                               // arm
 }
 
 function drawBubble(x, y, text, isLidia) {

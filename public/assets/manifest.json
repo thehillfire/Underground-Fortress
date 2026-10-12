@@ -1,12 +1,13 @@
 {
   "_note": "Generated with OpenArt (Seedream 4.5), dark industrial pixel-art style. The server downloads these into public/assets on first start; the client re-pixelates them on load.",
-  "lidia.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/0217918231402250d9bd7330cfa68208494cd13d7460bbaccb221_0_1791823151268_4cef40fd.jpeg",
-  "worker.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/0217918231413160c64a0471125ddcff16fb53685966178f17e3d_0_1791823148366_d4e27bd4.jpeg",
   "room_command.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/021791823142238fd2e0ebdb3eb064cbe39fbfe58bf726316248f_0_1791823150604_7c70c76e.jpeg",
   "room_workshop.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/021791823144024f419ea1e39f9dd10a4a699a297e9c9a1ef6af3_0_1791823151928_579d2ceb.jpeg",
   "room_library.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/0217918231463734d21f3e3e165e25fcf12f86815b4407f4036dd_0_1791823154659_ade9978c.jpeg",
   "room_server.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/021791823148968a4a9e4d164f3c176730993b0b2e8dd9dbb3012_0_1791823159142_f2109b5c.jpeg",
   "room_lab.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/02179182314956435c9db62ef7a9766eeb1c4efe709aaa9534ca0_0_1791823158174_e33323a1.jpeg",
-  "surface.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/0217918231518530c64a0471125ddcff16fb5368596617825a38b_0_1791823159779_34299ac0.jpeg",
-  "dirt.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/02179182331728481fbe8801b4cfc8e3454077f6383f7cf5e931c_0_1791823323840_1a1ad921.jpeg"
+  "surface.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/021791823748070e0fa5d59a7b50e9f748f37815b909e2897bd89_0_1791823755983_2959b402.jpeg",
+  "dirt.jpg": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/02179182331728481fbe8801b4cfc8e3454077f6383f7cf5e931c_0_1791823323840_1a1ad921.jpeg",
+  "survivor_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791823757976_e9dcbc84_1791823758629_2286b181.png",
+  "lidia_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791823760001_4934440b_1791823760239_2d53d939.png",
+  "zombie_sheet.png": "https://cdn.openart.ai/openart-ai/production/2026-10/create-image/JOfro7NbwLv63Sf6sEaU/image_1791823760645_de7ee2f8_1791823760860_607f2741.png"
 }

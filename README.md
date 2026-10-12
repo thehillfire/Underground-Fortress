@@ -1,10 +1,24 @@
 # Underground Fortress
 
-A 2D side-view underground facility where every dweller is a real **Claude Code session**. Lidia, the captain, runs the command room at the top. Dig a room and a new session moves in. When a session finishes a turn, it rides the elevator up to report, and Lidia decides what it does next. If she can't decide, the dweller turns **red with a `!`** and waits for you.
+A 2D side-view survivor bunker in a zombie apocalypse, where every survivor is a real **Claude Code session**. Lidia, the captain, runs the command room at the top. Dig a room and a new session moves in. When a session finishes a turn, it rides the elevator up to report, and Lidia decides what it does next. If she can't decide, the dweller turns **red with a `!`** and waits for you.
 
 Art: dark industrial pixel art (gunmetal, grates, red emergency light) generated with OpenArt. The client re-pixelates every asset on load (true low-res grid, limited palette, hard alpha, nearest-neighbour scaling), so the style holds even where a generated image comes out soft.
 
-## Run it
+## Run it on your phone (no computer, no API key)
+
+Everything runs on an Android phone, billed to your **Claude subscription**. Claude Code has no Android build, so a small Ubuntu layer runs inside Termux, and the fortress talks to it on `localhost`.
+
+1. Install **Termux** from F-Droid (the Play Store build is outdated).
+2. Paste this into Termux. Git asks for your GitHub username and a token, because the repo is private.
+   ```bash
+   pkg install -y git && git clone https://github.com/thehillfire/Underground-Fortress ~/fortress && bash ~/fortress/scripts/phone-setup.sh
+   ```
+3. `fortress login`, then type `/login` inside Claude and pick your Claude account (Pro/Max), **not** an API key. Type `/exit` when done.
+4. `fortress`: Chrome opens the game. ⋮ → **Add to Home screen** installs it as an app.
+
+Later: `fortress` to play, `fortress update` to update, `fortress mock` to try it without using Claude. SETUP → *Claude account* confirms you are on the subscription, and warns if an `ANTHROPIC_API_KEY` would bill per token instead. While the fortress runs, Termux holds a wake-lock so Android doesn't put the survivors to sleep. If the SDK's bundled Claude binary won't start on your phone, set `FORTRESS_CLAUDE_PATH=$(command -v claude)` inside Ubuntu.
+
+## Run it on a computer
 
 ```bash
 npm install

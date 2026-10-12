@@ -40,23 +40,56 @@ function connect() {
 }
 
 // ------------------------------------------------------------------ panels
+const ARMORY = ['repos', 'connectors', 'skills'];
 function open(t, sel = null) {
+  if (t === 'base') return close();
   tab = t; selected = sel ?? (t === 'lidia' ? 'lidia' : null);
   game.select(selected);
   panel.classList.add('open');
-  document.querySelectorAll('#topbar [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  panel.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('sheet-open');
+  const navTab = ARMORY.includes(t) ? 'connectors' : t === 'session' || t === 'new' ? null : t;
+  document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === navTab));
+  $('#armory-tabs').hidden = !ARMORY.includes(t);
+  document.querySelectorAll('#armory-tabs [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   mount();
   refresh();
 }
-function close() { tab = null; selected = null; game.select(null); panel.classList.remove('open'); document.querySelectorAll('#topbar [data-tab]').forEach(b => b.classList.remove('active')); }
-function openSession(id) { open('session', id); game.focusOn(id); }
+function close() {
+  tab = null; selected = null; game.select(null);
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('sheet-open');
+  document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'base'));
+}
+function openSession(id) { open('session', id); game.focusOn(id, sheetInset()); }
+const sheetInset = () => (innerWidth < 900 ? panel.offsetHeight : 0);
 
 $('#panel-close').onclick = close;
-document.querySelectorAll('#topbar [data-tab]').forEach(b => b.onclick = () => (tab === b.dataset.tab ? close() : open(b.dataset.tab)));
+document.querySelectorAll('#nav [data-tab], #armory-tabs [data-tab]').forEach(b => b.onclick = () => {
+  const t = b.dataset.tab;
+  if (b.closest('#nav') && (tab === t || (ARMORY.includes(tab) && b.hasAttribute('data-armory')))) return close();
+  open(t);
+});
 $('#btn-new').onclick = () => open('new');
 $('#zoom-in').onclick = () => game.zoomBy(1.2);
 $('#zoom-out').onclick = () => game.zoomBy(1 / 1.2);
-$('#home').onclick = () => game.focusOn('lidia');
+$('#home').onclick = () => game.focusOn('lidia', tab ? sheetInset() : 0);
+
+// Swipe the sheet down by its header to close it.
+(() => {
+  const head = $('.panel-head');
+  let y0 = null;
+  head.addEventListener('pointerdown', (e) => { if (innerWidth >= 900 || e.target.closest('button')) return; y0 = e.clientY; panel.classList.add('drag'); head.setPointerCapture(e.pointerId); });
+  head.addEventListener('pointermove', (e) => { if (y0 == null) return; panel.style.transform = `translateY(${Math.max(0, e.clientY - y0)}px)`; });
+  const end = (e) => {
+    if (y0 == null) return;
+    const dy = e.clientY - y0; y0 = null;
+    panel.classList.remove('drag'); panel.style.transform = '';
+    if (dy > 80) close();
+  };
+  head.addEventListener('pointerup', end); head.addEventListener('pointercancel', end);
+})();
 
 // Static part of each panel (forms). Rebuilt only when the tab/selection changes.
 function mount() {
@@ -81,14 +114,19 @@ function refresh() {
 function renderTopbar() {
   const alerts = state.sessions.filter(s => s.status === 'needs_jav').length;
   const cost = state.sessions.reduce((a, s) => a + (s.costUsd || 0), 0);
-  $('#stats').innerHTML = `${state.sessions.length} dwellers · ${alerts ? `<b class="red">${alerts} need you</b> · ` : ''}$${cost.toFixed(2)}${state.mock ? ' · <i>mock</i>' : ''}`;
+  $('#stats').innerHTML = `${state.sessions.length} alive${alerts ? ` · <b class="red">${alerts}!</b>` : ''}${cost ? ` · $${cost.toFixed(2)}` : ''}${state.mock ? ' · <i>mock</i>' : ''}`;
   document.title = alerts ? `(${alerts}!) Underground Fortress` : 'Underground Fortress';
+  const base = $('#nav [data-tab="base"]');
+  base.querySelector('.badge')?.remove();
+  if (alerts) base.insertAdjacentHTML('beforeend', `<span class="badge">${alerts}</span>`);
 }
 
 function renderFeed() {
-  $('#feed').innerHTML = state.feed.slice(-6).map(f =>
-    `<div class="feed-${f.kind}" ${f.sessionId ? `data-sid="${f.sessionId}"` : ''}>${esc(f.text)}</div>`).join('');
-  $('#feed').querySelectorAll('[data-sid]').forEach(el => el.onclick = () => openSession(el.dataset.sid));
+  const item = (f) => `<div class="feed-${esc(f.kind)}" ${f.sessionId ? `data-sid="${esc(f.sessionId)}"` : ''}>${esc(f.text)}</div>`;
+  $('#feed').innerHTML = state.feed.slice(-6).map(item).join('');
+  const last = state.feed[state.feed.length - 1];
+  $('#ticker').innerHTML = last ? item(last) : '';
+  document.querySelectorAll('#feed [data-sid], #ticker [data-sid]').forEach(el => el.onclick = () => openSession(el.dataset.sid));
 }
 
 // ---- session
@@ -100,16 +138,14 @@ function mountSession() {
     <div id="s-alert"></div>
     <div id="s-log" class="log"></div>
     <form id="s-form" class="composer">
-      <textarea id="s-input" rows="2" placeholder="Tell this dweller what to do… (Enter to send)"></textarea>
-      <div class="row">
-        <button type="button" class="mic-inline" title="Speak">MIC</button>
-        <button type="submit" class="primary">Send</button>
-      </div>
+      <textarea id="s-input" rows="1" placeholder="Orders for this survivor…"></textarea>
+      <button type="button" class="mic-inline" title="Speak"><span class="mic-ico"></span></button>
+      <button type="submit" class="primary">SEND</button>
     </form>
     <details class="sub"><summary>Room settings</summary><div id="s-settings"></div></details>`;
   const form = $('#s-form'), input = $('#s-input');
   form.onsubmit = async (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = ''; await api('POST', `/api/sessions/${selected}/message`, { text: t }); };
-  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
+  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); form.requestSubmit(); } };
   $('.mic-inline', form).onclick = () => startMic();
   mountSessionSettings();
 }
@@ -165,8 +201,9 @@ function mountLidia() {
     <p class="muted">Every dweller reports to Lidia when they finish a turn. She tells them how to continue, or turns them red with a <b class="red">!</b> when she needs you. Talk to her to change orders, relay instructions, or open new rooms.</p>
     <div id="l-log" class="log"></div>
     <form id="l-form" class="composer">
-      <textarea id="l-input" rows="2" placeholder="Talk to Lidia… e.g. “Tell Builder to add tests” or “Open a library room to research pricing”"></textarea>
-      <div class="row"><button type="button" class="mic-inline">MIC</button><button type="submit" class="primary">Send</button></div>
+      <textarea id="l-input" rows="1" placeholder="Talk to Lidia…"></textarea>
+      <button type="button" class="mic-inline"><span class="mic-ico"></span></button>
+      <button type="submit" class="primary">SEND</button>
     </form>
     <details class="sub" open><summary>Standing orders</summary>
       <textarea id="l-orders" rows="5"></textarea>
@@ -180,7 +217,7 @@ function mountLidia() {
   $('#l-save').onclick = () => api('PUT', '/api/orders', { text: $('#l-orders').value });
   const form = $('#l-form'), input = $('#l-input');
   form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (!t) return; input.value = ''; api('POST', '/api/lidia', { text: t }).catch(err => toast(err.message)); };
-  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
+  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); form.requestSubmit(); } };
   $('.mic-inline', form).onclick = () => startMic();
 }
 function refreshLidia() {
@@ -194,7 +231,7 @@ function refreshLidia() {
 
 // ---- new dweller
 function mountNew() {
-  $('#panel-title').textContent = 'Dig a new room';
+  $('#panel-title').textContent = 'Excavate room';
   body.innerHTML = `
     <p class="muted">Every dweller is a full Claude Code session with its own room. Their workspace is their own folder, or a repository you connected.</p>
     <form id="n-form" class="stack">
@@ -207,6 +244,8 @@ function mountNew() {
   $('#n-form').onsubmit = async (e) => {
     e.preventDefault();
     const s = await api('POST', '/api/sessions', { name: $('#n-name').value, goal: $('#n-goal').value, roomType: $('#n-room').value, repoId: $('#n-repo').value || null });
+    // The socket update may land after this; don't let the panel think the dweller is gone.
+    if (!state.sessions.some(x => x.id === s.id)) { state.sessions.push(s); game.setState(state); }
     openSession(s.id);
   };
   refreshNew();
@@ -220,7 +259,7 @@ function refreshNew() {
 
 // ---- repos
 function mountRepos() {
-  $('#panel-title').textContent = 'Repositories';
+  $('#panel-title').textContent = 'Armory';
   body.innerHTML = `
     <p class="muted">Repos are cloned on this machine with your own git credentials and can be assigned to any room.</p>
     <form id="r-form" class="row"><input id="r-url" placeholder="owner/repo or https://github.com/owner/repo.git" required><button class="primary">Connect</button></form>
@@ -237,7 +276,7 @@ function refreshRepos() {
 
 // ---- connectors
 function mountConnectors() {
-  $('#panel-title').textContent = 'Comms: connectors';
+  $('#panel-title').textContent = 'Armory';
   body.innerHTML = `
     <p class="muted">Connectors are MCP servers. Every enabled connector is available to every dweller.</p>
     <h4>Connected</h4><div id="c-list"></div>
@@ -291,7 +330,7 @@ function refreshConnectors() {
 
 // ---- skills
 function mountSkills() {
-  $('#panel-title').textContent = 'Armory: skills';
+  $('#panel-title').textContent = 'Armory';
   body.innerHTML = `
     <p class="muted">Skills install to <code>~/.claude/skills</code>, so every dweller can use them.</p>
     <h4>Installed</h4><div id="k-list"></div>
@@ -337,8 +376,22 @@ function mountSettings() {
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
     </form>
+    <h4>Claude account</h4>
+    <div id="g-health" class="card"><div class="muted">Checking…</div></div>
+    <h4>Home screen</h4>
+    <p class="muted" id="g-install-note">${matchMedia('(display-mode: standalone)').matches ? 'Installed. You are running the home-screen app.' : 'Install the fortress as an app: own icon, full screen, no browser bar.'}</p>
+    <button id="g-install" class="primary" ${installPrompt ? '' : 'hidden'}>INSTALL APP</button>
+    <p class="muted small" ${installPrompt ? 'hidden' : ''}>No install button? In Chrome open the ⋮ menu → <b>Add to Home screen</b> → Install.</p>
     <h4>Voice</h4>
-    <p class="muted">${voice.voiceSupported ? 'Press <kbd>M</kbd> or the 🎙 button and speak. Start with “Lidia, …” or a dweller’s name to address them; otherwise it goes to whoever is open.' : 'Your browser has no speech recognition. Use Chrome or Edge.'}</p>`;
+    <p class="muted">${voice.voiceSupported ? 'Tap <b>TALK</b> (or press <kbd>M</kbd> on a keyboard) and speak. Start with “Lidia, …” or a dweller’s name to address them; otherwise it goes to whoever is open.' : 'Your browser has no speech recognition. Use Chrome or Edge.'}</p>`;
+  api('GET', '/api/health').then(h => {
+    const line = h.mock ? '<b>Mock mode.</b> Survivors are fake; no Claude usage.'
+      : h.apiKey ? '<b class="red">ANTHROPIC_API_KEY is set.</b> Survivors bill your API account per token, not your subscription. Unset it to use your plan.'
+      : h.subscription ? '<b style="color:var(--green)">Signed in with your Claude subscription.</b> No API key in use.'
+      : '<b class="red">Not signed in.</b> On the phone run <code>fortress login</code>, then <code>/login</code> with your Claude account.';
+    $('#g-health').innerHTML = `<div>${line}<div class="muted small">${esc(h.platform)} · node ${esc(h.node)}</div></div>`;
+  }).catch(() => {});
+  $('#g-install').onclick = async () => { installPrompt?.prompt(); await installPrompt?.userChoice; installPrompt = null; mount(); };
   $('#g-form').onsubmit = async (e) => {
     e.preventDefault();
     await api('PATCH', '/api/settings', { model: $('#g-model').value.trim(), lidiaModel: $('#g-lmodel').value.trim(), permissionMode: $('#g-perm').value,
@@ -401,6 +454,11 @@ function chime() {
   } catch {}
 }
 
+// ------------------------------------------------------------------ home-screen app
+let installPrompt = null;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (tab === 'settings') mount(); });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
 // ------------------------------------------------------------------ boot
 game.initGame($('#world'), {
   onPick: (hit) => {
@@ -411,4 +469,5 @@ game.initGame($('#world'), {
   },
 });
 game.focusOn('lidia');
+close();
 loadArt().then(connect);

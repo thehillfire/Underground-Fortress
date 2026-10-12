@@ -2,6 +2,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 export const MOCK = process.env.FORTRESS_MOCK === '1';
+// Use an installed `claude` instead of the SDK's bundled one (escape hatch for unusual platforms).
+const CLAUDE_PATH = process.env.FORTRESS_CLAUDE_PATH ? { pathToClaudeCodeExecutable: process.env.FORTRESS_CLAUDE_PATH } : {};
 
 /**
  * Run one turn of a Claude session (a new one, or resumed by `resume`).
@@ -23,6 +25,7 @@ export async function runTurn(opts) {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: appendSystem },
       canUseTool,
       abortController,
+      ...CLAUDE_PATH,
     },
   });
   let out = { result: '', isError: false, costUsd: 0, sessionId: resume };
@@ -57,6 +60,7 @@ export async function oneShot({ system, prompt, model }) {
       permissionMode: 'dontAsk',
       allowedTools: [],
       settingSources: [],
+      ...CLAUDE_PATH,
     },
   });
   let text = '';
