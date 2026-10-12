@@ -7,3 +7,6 @@ public/assets/*.png
 public/assets/.sources.json
 .open-url
 .termux-action
+# CI / security artifacts
+sbom.cdx.json
+gitleaks-report.*

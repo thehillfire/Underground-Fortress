@@ -93,11 +93,13 @@ const TOOLS = [
     }),
   tool('create_project', 'Open a new project room. A project holds any number of agents who share its folder (or repository). Put agents whose work belongs together (e.g. lead scouting and lead outreach) in one project.',
     { name: z.string(), goal: z.string().optional(), roomType: z.enum(projects.ROOM_TYPES).optional(),
-      repo: z.string().optional().describe('name of a connected repository the project works on') },
-    async ({ name, goal, roomType, repo }) => {
+      repo: z.string().optional().describe('name of a connected repository the project works on'),
+      lifecycle: z.enum(['persistent', 'ephemeral']).optional().describe('ephemeral rooms archive themselves when every agent in them is done'),
+      parent: z.string().optional().describe('name of a room to nest this one inside') },
+    async ({ name, goal, roomType, repo, lifecycle, parent }) => {
       if (projects.findProject(name)?.name.toLowerCase() === name.toLowerCase()) return fail(`A project called ${name} already exists.`);
       const r = repo ? store.state.repos.find(x => x.name.toLowerCase().includes(repo.toLowerCase())) : null;
-      const p = projects.createProject({ name, goal, roomType, repoId: r?.id || null, by: 'lidia' });
+      const p = projects.createProject({ name, goal, roomType, repoId: r?.id || null, by: 'lidia', lifecycle, parent: parent ? projects.findProject(parent)?.id : null });
       return ok(`Project room "${p.name}" is open${r ? ` on ${r.name}` : ''}.`);
     }),
   tool('create_agent', 'Move a new agent (a fresh Claude Code session) into a project room and start it. Check fortress_status first: reuse an existing agent whose project fits instead of making duplicates. The goal is its whole brief, so make it complete: the goal, the context, what "done" looks like, where files go, and who it hands off to. The result tells you whether it really started; only say it is working if it says so.',
@@ -121,6 +123,8 @@ const TOOLS = [
       sessions.move(s.id, p.id);
       return ok(`${s.name} is now in ${p.name}.`);
     }),
+  tool('archive_room', 'Archive a finished room (hidden, nothing deleted; restorable). Refused while an agent in it is busy.', { name: z.string() },
+    async ({ name }) => { const p = projects.findProject(name); if (!p) return fail(`No room ${name}`); try { projects.archiveProject(p.id); return ok(`${p.name} archived.`); } catch (e) { return fail(e.message); } }),
   tool('rename_project', 'Rename a project room, change its room type, or set its goal.',
     { project: z.string(), name: z.string().optional(), roomType: z.enum(projects.ROOM_TYPES).optional(), goal: z.string().optional() },
     async ({ project, ...patch }) => {

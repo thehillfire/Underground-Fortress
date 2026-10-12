@@ -46,7 +46,7 @@ h4 { margin: 16px 0 8px; color: var(--accent2); font-family: var(--pixel); font-
 
 /* ---- bottom nav */
 #nav { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--nav-h) + var(--safe-b)); padding-bottom: var(--safe-b);
-  display: grid; grid-template-columns: repeat(5, 1fr); background: #08070a; border-top: 2px solid #2a0d0b; z-index: 8; }
+  display: grid; grid-template-columns: repeat(6, 1fr); background: #08070a; border-top: 2px solid #2a0d0b; z-index: 8; }
 #nav button { position: relative; border: 0; box-shadow: none; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 5px; font-size: 9px; color: var(--muted); min-height: 0; padding: 0; }
 #nav button.active { color: var(--accent); background: #15080a; box-shadow: inset 0 3px 0 var(--accent); }
@@ -60,6 +60,7 @@ h4 { margin: 16px 0 8px; color: var(--accent2); font-family: var(--pixel); font-
 .ico-base { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M0 3h8v1H0zM1 4h6v4H1zM3 0h2v3H3z'/%3E%3C/svg%3E"); }
 .ico-lidia { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M2 0h4v1H2zM2 1h4v3H2zM1 4h6v4H1z'/%3E%3C/svg%3E"); }
 .ico-dig { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M3 1h2v6H3zM1 3h6v2H1z'/%3E%3C/svg%3E"); }
+.ico-deck { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M0 1h8v4H0zM1 6h6v1H1zM3 5h2v1H3z'/%3E%3C/svg%3E"); }
 .ico-armory { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M0 2h8v6H0zM2 0h4v2H2z'/%3E%3C/svg%3E"); }
 .ico-settings { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M3 0h2v2H3zM3 6h2v2H3zM0 3h2v2H0zM6 3h2v2H6zM2 2h4v4H2z'/%3E%3C/svg%3E"); }
 

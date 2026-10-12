@@ -1,0 +1,19 @@
+title = "Underground Fortress gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key (must never exist in this project)"
+regex = '''sk-ant-[a-zA-Z0-9_\-]{20,}'''
+tags = ["key", "anthropic"]
+
+[allowlist]
+description = "Ignore generated and vendored files"
+paths = [
+  '''node_modules/''',
+  '''package-lock.json''',
+  '''data/''',
+  '''workspaces/''',
+]

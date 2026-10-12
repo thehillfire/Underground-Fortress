@@ -103,6 +103,9 @@ app.get('/api/health', wrap(() => {
 app.post('/api/projects', wrap((r) => projects.createProject({ ...r.body, auto: false, by: 'jav' })));
 app.patch('/api/projects/:id', wrap((r) => projects.updateProject(r.params.id, r.body)));
 app.delete('/api/projects/:id', wrap((r) => projects.removeProject(r.params.id)));
+app.post('/api/projects/:id/archive', wrap((r) => projects.archiveProject(r.params.id)));
+app.post('/api/projects/:id/restore', wrap((r) => projects.restoreProject(r.params.id)));
+app.get('/api/archive', wrap(() => store.state.projects.filter(p => p.archived)));
 
 // Sessions
 app.post('/api/sessions', wrap((r) => sessions.create({ ...r.body, by: 'jav' }), schemas.session));
@@ -279,6 +282,7 @@ for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end', 'lidia-live
 await ensureAssets();
 startUsagePolling();
 startScheduler(sessions.send);
+setInterval(() => { projects.sweepEphemeral(); for (const x of store.state.sessions) memory.consolidate(x.id); }, 60_000).unref();
 server.listen(PORT, HOST, () => {
   sessions.recoverInterrupted();
   console.log(`\n  ⛏  Underground Fortress is open at http://${HOST}:${PORT}${MOCK ? '  (mock mode: no real Claude calls)' : ''}\n`);

@@ -119,9 +119,15 @@ class Store extends EventEmitter {
   // What the browser sees: drop bulky fields it doesn't need.
   publicState() {
     const st = this.state;
+    const { bus, decisions, memory, ...rest } = st;   // bulky; the deck fetches these on demand
+    const hidden = new Set((st.projects || []).filter(p => p.archived).map(p => p.id));
     return {
-      ...st,
-      sessions: st.sessions.map(s => ({ ...s, log: s.log.slice(-300) })),
+      ...rest,
+      archivedCount: hidden.size,
+      projects: (st.projects || []).filter(p => !p.archived),
+      tasks: (st.tasks || []).slice(-60),
+      anomalies: (st.anomalies || []).slice(-20),
+      sessions: st.sessions.filter(s => !hidden.has(s.projectId)).map(s => ({ ...s, log: s.log.slice(-300) })),
       lidiaChat: st.lidiaChat.slice(-100),
       reports: st.reports.slice(-30),
       feed: st.feed.slice(-50),

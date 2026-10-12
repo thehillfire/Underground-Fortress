@@ -5,6 +5,9 @@
 // and utility pockets tie the levels together so the bunker reads as a network.
 // On the surface, defenders on two barricade walls hold back the horde.
 import { art } from './assets.js';
+// [world-theme hook] Registry of alternate looks. `TH()` is null for the original fortress, so every
+// hook below is a no-op there and the default rendering stays pixel-identical.
+import { activeTheme as TH, onWorldTheme, drawThemeFade, isReducedMotion } from './world-themes.js';
 
 export const SHAFT_W = 96, SLAB = 22, TOP = 70;
 const LEVEL_H = 410, MAX_H = 330;           // every level's floor lines up; rooms differ in width and height
@@ -13,8 +16,10 @@ const TUNNEL_H = 92;
 const ZOMBIE_Y = -12;
 
 const ROOM_TINT = { workshop: '#3b3a3f', library: '#38353a', server: '#2c3138', lab: '#2b3533', command: '#3d2f31', hall: '#34322f', garage: '#3a3530', vault: '#30333a' };
-const FONT = '"Silkscreen", "VT323", monospace';
-const BODY_FONT = '"VT323", monospace';
+let FONT = '"Silkscreen", "VT323", monospace';
+let BODY_FONT = '"VT323", monospace';
+let GK = null;                                   // [world-theme hook] layout constants handed to theme art
+onWorldTheme((t) => { FONT = t.fonts.title; BODY_FONT = t.fonts.body; });
 export const ROOM_LABEL = { workshop: 'Workshop', library: 'Archive', server: 'Reactor', lab: 'Bio Lab', hall: 'Ops Hall', garage: 'Garage', vault: 'Vault' };
 
 const cam = { x: 0, y: 260, zoom: 0.9 };
@@ -29,6 +34,7 @@ let roomRects = [];            // for hit testing
 // ------------------------------------------------------------------ layout
 const roomBottom = (level) => TOP + level * LEVEL_H + MAX_H;
 const floorY = (level) => roomBottom(level) - 14;
+GK = { SLAB, TUNNEL_H, SHAFT_W, roomBottom };
 const BRIDGE = { x: SHAFT_W / 2 + 40, y: roomBottom(0) - 270, w: 480, h: 270, level: 0, side: 1 };
 const COMMS = { x: -SHAFT_W / 2 - 40 - 480, y: roomBottom(0) - 270, w: 480, h: 270, level: 0, side: -1 };
 
@@ -183,7 +189,7 @@ function flyCam(fn) {
   fn();
   const to = { x: cam.x, y: cam.y };
   cam.x = from.x; cam.y = from.y;
-  fly = { from, to, t0: performance.now(), dur: 650 };
+  fly = { from, to, t0: performance.now(), dur: isReducedMotion() ? 1 : 650 };   // [world-theme hook] reduced motion: jump
 }
 /** Smoothly move the camera to someone (same framing as focusOn). */
 export function flyTo(id, insetBottom = 0) { flyCam(() => focusOn(id, insetBottom)); }
@@ -390,8 +396,11 @@ function frame(now) {
 
 function draw(now) {
   const W = canvas.width, H = canvas.height;
+  const T = TH();                                                    // [world-theme hook]
+  if (isReducedMotion()) now = 350;                                  // [world-theme hook] freeze blinking/flicker (alert state stays 'on')
+  const view = { x0: cam.x - W / dpr / cam.zoom / 2, x1: cam.x + W / dpr / cam.zoom / 2, y0: cam.y - H / dpr / cam.zoom / 2, y1: cam.y + H / dpr / cam.zoom / 2 };
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#0b0a0c';
+  ctx.fillStyle = T ? T.palette.void : '#0b0a0c';
   ctx.fillRect(0, 0, W, H);
   ctx.imageSmoothingEnabled = false;
   ctx.setTransform(cam.zoom * dpr, 0, 0, cam.zoom * dpr, W / 2 - cam.x * cam.zoom * dpr, H / 2 - cam.y * cam.zoom * dpr);
@@ -400,6 +409,7 @@ function draw(now) {
   drawEarth(bottom);
   drawSurface();
   drawDefense(now);
+  T?.ambient?.(ctx, view, now, 'back');                              // [world-theme hook]
 
   roomRects = [];
   // Tunnels and ladders first, so rooms sit on top of them.
@@ -409,39 +419,43 @@ function draw(now) {
   drawShaft(bottom - 260);
   for (const p of layout.pockets) drawPocket(p, now);
 
-  drawRoom(COMMS, 'server', 'COMMS / ARMORY', { kind: 'tab', tab: 'connectors' }, null, now);
-  drawRoom(BRIDGE, 'command', 'COMMAND', { kind: 'lidia' }, selected === 'lidia' ? '#d8dde3' : null, now);
+  drawRoom(COMMS, 'server', T?.fixedLabels.comms || 'COMMS / ARMORY', { kind: 'tab', tab: 'connectors' }, null, now);
+  drawRoom(BRIDGE, 'command', T?.fixedLabels.command || 'COMMAND', { kind: 'lidia' }, selected === 'lidia' ? '#d8dde3' : null, now);
   if (state) {
     for (const r of layout.rooms) {
       const ms = state.sessions.filter(s => s.projectId === r.project.id);
       const alert = ms.some(s => (s.status === 'needs_jav' || s.status === 'error'));
       const mine = selected === `p:${r.project.id}` || ms.some(s => s.id === selected);
       const glow = alert ? (Math.floor(now / 350) % 2 ? '#ff2a1a' : '#5a0a06') : mine ? '#d8dde3' : null;
-      const label = `${r.project.name.toUpperCase()} / ${(ROOM_LABEL[r.project.roomType] || r.project.roomType).toUpperCase()}`;
+      const label = `${r.project.name.toUpperCase()} / ${((T?.roomLabels[r.project.roomType]) || ROOM_LABEL[r.project.roomType] || r.project.roomType).toUpperCase()}`;
       drawRoom(r, r.project.roomType, label, { kind: 'project', id: r.project.id }, glow, now, alert, ms.length);
     }
     drawDig(layout.dig);
   }
 
   const lAnim = lidia.walking ? 'walk' : lidia.bubble && now < lidia.bubble.until ? 'command' : 'idle';
-  drawCharacter(lidia, art.chars.lidia, lAnim, LIDIA_H, { name: 'CPT. LIDIA', color: '#ff5a4a', now, isLidia: true });
+  drawCharacter(lidia, T ? T.lidia() : art.chars.lidia, lAnim, LIDIA_H, { name: T ? T.lidiaName : 'CPT. LIDIA', color: T ? T.lidiaColor : '#ff5a4a', now, isLidia: true });
   for (const e of chars.values()) {
     const s = e.session;
     if (!s) continue;
     const alert = (s.status === 'needs_jav' || s.status === 'error');
     const anim = alert && !e.walking ? 'panic' : e.walking ? 'walk' : (s.status === 'working' || e.visiting) ? 'work' : 'rest';
     const look = art.cast?.length ? art.cast[(s.look ?? hash(s.id)) % art.cast.length] : null;
-    drawCharacter(e, look ? (alert ? look.red : look.anims) : (alert ? art.chars.survivorRed : art.chars.survivor), anim, CHAR_H, {
+    const sheet = look ? (alert ? look.red : look.anims) : (alert ? art.chars.survivorRed : art.chars.survivor);
+    drawCharacter(e, T && !alert ? T.skin(sheet, 'agent') : sheet, anim, CHAR_H, {         // [world-theme hook] recolor agents
       name: s.name.toUpperCase(), color: `hsl(${s.hue},45%,70%)`, now, alert, done: s.status === 'done',
       working: s.status === 'working' || e.visiting, activity: e.visiting ? 'reviewing' : s.activity, selected: s.id === selected,
     });
   }
+  T?.ambient?.(ctx, view, now, 'front');                             // [world-theme hook]
+  drawThemeFade(ctx, canvas, now);                                   // [world-theme hook] 600ms crossfade on theme switch
 }
 
 const hash = (str) => [...String(str)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 
 function drawEarth(bottom) {
   const x0 = -6000, x1 = 6000, y1 = bottom + 3000;
+  { const T = TH(); if (T) return T.earth(ctx, x0, x1, y1, isReducedMotion() ? 350 : performance.now()); }   // [world-theme hook]
   if (art.dirt) {
     ctx.save();
     ctx.scale(4, 4);
@@ -467,6 +481,7 @@ function drawEarth(bottom) {
 
 function drawSurface() {
   const w = 2560;
+  { const T = TH(); if (T) return T.surface(ctx, isReducedMotion() ? 350 : performance.now()); }   // [world-theme hook]
   if (art.surface) {
     const h = w * art.surface.height / art.surface.width;
     ctx.fillStyle = '#07080b'; ctx.fillRect(-6000, -h - 2000, 12000, h + 2000);
@@ -523,7 +538,9 @@ function drawWall(side) {
   ctx.save();
   ctx.translate(cx, 4);
   if (side < 0) ctx.scale(-1, 1);
-  if (art.wall) {
+  const T = TH();
+  if (T) T.wall(ctx, WALL_W, WALL_H);                                // [world-theme hook]
+  else if (art.wall) {
     const h = WALL_H + 20, w = Math.min(WALL_W * 1.6, h * art.wall.width / art.wall.height);
     ctx.drawImage(art.wall, -w / 2, -h, w, h);
   } else {
@@ -555,9 +572,10 @@ function drawDefense(now) {
   for (const b of blood) { ctx.fillStyle = `rgba(150,8,10,${Math.min(1, b.life)})`; ctx.fillRect(Math.round(b.x), Math.round(b.y), 5, 5); }
   for (const d of defenders) {
     const anim = d.anim === 'push' && d.animT < 0.6 ? 'push' : 'shoot';
-    const frames = art.chars.defender?.[anim];
+    const DS = TH() ? TH().skin(art.chars.defender, 'defender') : art.chars.defender;   // [world-theme hook]
+    const frames = DS?.[anim];
     const ph = anim === 'shoot' ? (d.animT < 0.18 ? 1 + Math.floor(d.animT / 0.06) % 2 : 0) : Math.floor(d.animT * 10);
-    const p = frames && pose(art.chars.defender, anim, 0, 92);
+    const p = frames && pose(DS, anim, 0, 92);
     if (p) {
       const f = frames[Math.min(frames.length - 1, ph)] || frames[0];
       const S = p.S, w = f.width * S, h = f.height * S;
@@ -608,6 +626,7 @@ function hazard(x, y, w, h) {
 }
 
 function drawShaft(bottom) {
+  { const T = TH(); if (T) return T.shaft(ctx, bottom, GK, isReducedMotion() ? 350 : performance.now()); }   // [world-theme hook]
   ctx.fillStyle = '#0f0e11';
   ctx.fillRect(-SHAFT_W / 2, 0, SHAFT_W, bottom);
   ctx.fillStyle = '#25232a';
@@ -633,6 +652,7 @@ function drawTunnel(t, now) {
   const x = Math.min(t.x0, t.x1), w = Math.abs(t.x1 - t.x0);
   if (w < 2) return;
   const y1 = roomBottom(t.level), y0 = y1 - TUNNEL_H;
+  { const T = TH(); if (T) return T.tunnel(ctx, x, w, y0, y1, GK, now); }   // [world-theme hook]
   ctx.fillStyle = '#060507'; ctx.fillRect(x, y0 - 8, w, TUNNEL_H + 8 + SLAB);
   ctx.fillStyle = '#1e1c21'; ctx.fillRect(x, y0, w, TUNNEL_H);
   ctx.fillStyle = '#2a282e'; for (let bx = x; bx < x + w; bx += 40) ctx.fillRect(bx, y0, 4, TUNNEL_H);            // support ribs
@@ -651,6 +671,7 @@ function drawTunnel(t, now) {
 function drawLadder(l) {
   const h = l.y1 - l.y0;
   if (h <= 0) return;
+  { const T = TH(); if (T) return T.ladder(ctx, l); }                  // [world-theme hook]
   ctx.fillStyle = '#060507'; ctx.fillRect(l.x - 6, l.y0, 36, h);
   ctx.fillStyle = '#16141a'; ctx.fillRect(l.x, l.y0, 24, h);
   ctx.fillStyle = '#4a4850'; ctx.fillRect(l.x + 2, l.y0, 3, h); ctx.fillRect(l.x + 19, l.y0, 3, h);
@@ -659,6 +680,7 @@ function drawLadder(l) {
 
 /** Small machinery pockets that keep the fortress alive. Not clickable. */
 function drawPocket(p, now) {
+  { const T = TH(); if (T) return T.pocket(ctx, p, GK, now); }          // [world-theme hook]
   const r = p;
   ctx.fillStyle = '#060507'; ctx.fillRect(r.x - 8, r.y - 8, r.w + 16, r.h + 8 + SLAB);
   ctx.fillStyle = '#26242a'; ctx.fillRect(r.x, r.y, r.w, r.h);
@@ -691,6 +713,7 @@ function drawCover(img, r) {
 
 function drawRoom(r, type, label, hit, glow, now = 0, alert = false, count = null) {
   roomRects.push({ ...r, hit });
+  { const T = TH(); if (T) return T.room(ctx, r, type, label, glow, now, alert, count, GK); }   // [world-theme hook]
   ctx.save();
   ctx.fillStyle = '#060507';
   ctx.fillRect(r.x - 10, r.y - 10, r.w + 20, r.h + 10 + SLAB);
@@ -769,6 +792,7 @@ function proceduralRoom(r, type, now) {
 function drawDig(r) {
   if (!r) return;
   roomRects.push({ ...r, hit: { kind: 'dig' } });
+  { const T = TH(); if (T) return T.dig(ctx, r); }                     // [world-theme hook]
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(r.x, r.y, r.w, r.h);
   ctx.setLineDash([12, 8]);
@@ -795,7 +819,8 @@ function pose(anims, anim, t, targetH, fps = 9) {
 }
 
 function drawZombie(z, now) {
-  const set = art.chars[z.kind] || art.chars.zombie;
+  let set = art.chars[z.kind] || art.chars.zombie;
+  { const T = TH(); if (T) set = T.skin(set, 'enemy'); }               // [world-theme hook]
   const anim = z.state === 'walk' ? 'walk' : z.state === 'attack' ? (set.attack ? 'attack' : 'idle') : (set.hit ? 'hit' : 'idle');
   let p = pose(set, anim, z.state === 'hit' || z.state === 'dead' ? Math.min(z.st, 0.6) : z.t, 92, z.state === 'attack' ? 8 : 6);
   if (z.state === 'dead' && set.hit) { const fr = set.hit; p = { ...p, f: fr[fr.length - 1] }; }

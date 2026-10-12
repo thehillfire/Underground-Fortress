@@ -1,0 +1,73 @@
+/* Accessibility layer. Load AFTER style.css and chat.css.
+   Driven by world-themes.js (listens to the `fortress-settings` event):
+     html/body.reduce-motion         settings.reduceMotion OR the OS prefers-reduced-motion
+     body[data-colorblind=...]       none | protanopia | deuteranopia | tritanopia
+   The colorblind filters (#fortress-cb-*) are inline SVG that world-themes.js injects. */
+
+/* ---------- visible focus ---------- */
+:focus { outline: none; }
+:focus-visible {
+  outline: 3px solid var(--world-accent, #ffd04a);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(0, 0, 0, 0.85);
+  border-radius: 4px;
+}
+canvas#world:focus-visible { outline-offset: -4px; box-shadow: none; border-radius: 0; }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline-width: 3px; }
+button:focus-visible, [role="button"]:focus-visible, a:focus-visible, summary:focus-visible { outline-offset: 3px; }
+
+/* ---------- reduced motion ---------- */
+html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after,
+body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0s !important;
+  transition-duration: 0.001ms !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+}
+html.reduce-motion body::after, body.reduce-motion::after { animation: none !important; }   /* scanline / vignette flicker */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  body::after { animation: none !important; }
+}
+
+/* ---------- colorblind correction (SVG feColorMatrix, "daltonization") ----------
+   Applied to each top-level layer rather than <body>: a filter on <body> would turn it into the
+   containing block of every position:fixed panel and break the layout. */
+body[data-colorblind="protanopia"]   > *:not(svg):not(script):not(style):not(link) { filter: url(#fortress-cb-protanopia); }
+body[data-colorblind="deuteranopia"] > *:not(svg):not(script):not(style):not(link) { filter: url(#fortress-cb-deuteranopia); }
+body[data-colorblind="tritanopia"]   > *:not(svg):not(script):not(style):not(link) { filter: url(#fortress-cb-tritanopia); }
+
+/* Never rely on color alone: status dots / badges get a shape cue when a colorblind mode is on. */
+body[data-colorblind]:not([data-colorblind="none"]) .dot.alert::after,
+body[data-colorblind]:not([data-colorblind="none"]) [data-status="needs_jav"]::after,
+body[data-colorblind]:not([data-colorblind="none"]) [data-status="error"]::after { content: " !"; font-weight: 700; }
+body[data-colorblind]:not([data-colorblind="none"]) [data-status="done"]::after { content: " \2713"; font-weight: 700; }
+
+/* ---------- high contrast ---------- */
+@media (prefers-contrast: more) {
+  :root { --t-line: #8a8a8a; --t-card-line: #a0a0a0; --t-input-line: #b0b0b0; --t-muted: #c8c8c8; --t-think: #d0d0d0; }
+  button, input, textarea, select, #panel, #chats, .card { border-color: currentColor !important; }
+  button:disabled { opacity: 0.7; text-decoration: line-through; }
+  body::after { display: none !important; }              /* scanlines hurt legibility */
+  ::placeholder { color: #d0d0d0 !important; opacity: 1; }
+}
+@media (forced-colors: active) {
+  :focus-visible { outline: 3px solid Highlight; box-shadow: none; }
+  button, input, textarea, select { border: 1px solid ButtonText; }
+  canvas#world { forced-color-adjust: none; }
+}
+
+/* Minimum touch target for the controls most likely to be tapped by accident. */
+@media (pointer: coarse) {
+  button, [role="button"], select { min-height: 40px; }
+}
+
+/* Screen-reader-only helper, handy for announcing theme changes. */
+.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

@@ -5,6 +5,7 @@ import * as voice from './voice.js';
 import * as talk from './talk.js';
 import { rich, copyBtn, bindCopy } from './rich.js';
 import { makeAttach, fileChips } from './attach.js';
+import * as deck from './deck.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -13,6 +14,13 @@ const api = async (method, url, body) => {
   try { res = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); }
   catch { serverDown(); throw new Error('The fortress is asleep. Open Termux and it wakes up.'); }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.login && !url.startsWith('/api/auth/')) {
+    // The 15-minute login lapsed: renew it quietly, once; otherwise ask for the passphrase.
+    const r = await fetch('/api/auth/refresh', { method: 'POST' }).catch(() => null);
+    if (r?.ok) return api(method, url, body);
+    deck.showLogin(() => location.reload());
+    throw new Error('Login required');
+  }
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 };
@@ -43,7 +51,9 @@ function connect() {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.type === 'state') { state = m.state; game.setState(state); refresh(); }
+    if (m.type === 'state') { state = m.state; game.setState(state); window.dispatchEvent(new CustomEvent('fortress-settings', { detail: { settings: state.settings } })); refresh(); }
+    else if (m.type === 'decision') deck.onDecision(m.decision);
+    else if (m.type === 'anomaly') toast(`⚠ ${m.anomaly.agent}: ${m.anomaly.reason}`);
     else if (m.type === 'bubble') {
       game.bubble(m);
     } else if (m.type === 'report') game.report(m.sessionId);
@@ -58,7 +68,10 @@ function connect() {
       toast(`! ${s?.name || 'A dweller'} needs you: ${m.text}`, () => openSession(m.sessionId));
     }
   };
-  ws.onclose = () => { $('#conn').textContent = '● reconnecting'; serverDown(); setTimeout(connect, 1500); };
+  ws.onclose = (ev) => {
+    if (ev.code === 4401) { fetch('/api/auth/refresh', { method: 'POST' }).then(r => (r.ok ? connect() : deck.showLogin(() => connect()))); return; }
+    $('#conn').textContent = '● reconnecting'; serverDown(); setTimeout(connect, 1500);
+  };
   ws.onopen = () => {
     $('#conn').textContent = '';
     serverUp();
@@ -88,6 +101,7 @@ function open(t, sel = null) {
   refresh();
 }
 function close() {
+  deck.stopDeck();
   $('#panel-menu')?.remove(); $('#agent-menu')?.remove();
   tab = null; selected = null; game.select(null);
   panel.classList.remove('open');
@@ -139,7 +153,9 @@ function mount() {
   const M = {
     session: mountSession, project: mountProject, lidia: mountLidia, new: mountNew, repos: mountRepos,
     connectors: mountConnectors, skills: mountSkills, settings: mountSettings, ledger: mountLedger,
+    deck: () => { $('#panel-title').textContent = "Lidia's command deck"; deck.mountDeck(body); },
   }[tab];
+  if (tab !== 'deck') deck.stopDeck();
   body.innerHTML = '';
   M?.();
 }
@@ -734,6 +750,7 @@ function mountSettings() {
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
     </form>
+    <div id="g-appearance"></div>
     <h4>System</h4>
     <div class="card sys"><div><b id="sys-ver">Checking version…</b><div class="muted small" id="sys-changes"></div></div></div>
     <div class="sys-btns">
@@ -757,6 +774,7 @@ function mountSettings() {
     <p class="muted small" ${installPrompt ? 'hidden' : ''}>No install button? In Chrome open the ⋮ menu → <b>Add to Home screen</b> → Install.</p>
     <h4>Voice</h4>
     <p class="muted">${voice.voiceSupported ? 'Tap <b>TALK</b> (or press <kbd>M</kbd> on a keyboard) and speak. Start with “Lidia, …” or a dweller’s name to address them; otherwise it goes to whoever is open.' : 'Your browser has no speech recognition. Use Chrome or Edge.'}</p>`;
+  deck.mountAppearance($('#g-appearance'));
   loadVersion();
   $('#sys-update').onclick = async (e) => {
     const b = e.currentTarget; b.disabled = true; b.textContent = 'UPDATING…';
@@ -1030,4 +1048,5 @@ talk.initTalk({
   onSend: () => askNotify(),
   onClose: () => { game.select(selected); document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (tab && !['session', 'new'].includes(tab) ? (['repos','connectors','skills'].includes(tab) ? 'connectors' : tab) : 'base'))); },
 });
+deck.init({ api, toast, getState: () => state, openSession });
 loadArt().then(connect);
