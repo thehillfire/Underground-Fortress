@@ -21,6 +21,17 @@ import { resolveUpload } from './files.js';
 import { javReacts } from './reactions.js';
 import * as intent from './intent.js';
 import * as prio from './priority.js';
+import * as auth from './auth.js';
+import * as audit from './audit.js';
+import * as bus from './bus.js';
+import * as taskGraph from './tasks.js';
+import * as artifacts from './artifacts.js';
+import * as memory from './memory.js';
+import { guard as hostGuard, hostAllowed } from './hostguard.js';
+import { allow as rateAllow, limitedCount } from './ratelimit.js';
+import { isKilled } from './safety.js';
+import { schemas } from './schemas.js';
+import { renderMetrics } from './metrics.js';
 
 // One agent or request throwing must not take the whole fortress down (it used to: the phone then
 // showed "failed to fetch" until Termux was reopened). Log it, keep running.
@@ -39,12 +50,31 @@ const lastCrash = () => {
 const PORT = Number(process.env.PORT || 4321);
 const HOST = process.env.HOST || '127.0.0.1';
 const app = express();
+app.disable('x-powered-by');
+app.use(hostGuard);
 app.use(express.json({ limit: '60mb' }));   // photos and files come in as base64
 app.use(express.static(path.join(ROOT, 'public')));
 
-const wrap = (fn) => async (req, res) => {
-  try { res.json((await fn(req)) ?? { ok: true }); }
-  catch (e) { res.status(400).json({ error: e.message }); }
+// Rate limits (per client), then login (when Jav has turned it on), then an audit line for every change.
+const HEAVY = /^\/api\/(lidia|sessions\/[^/]+\/message|bus)$/;
+app.use('/api', (req, res, next) => {
+  const ip = req.socket.remoteAddress || 'local';
+  if (!rateAllow(`api:${ip}`, 240, 20) || (req.method === 'POST' && HEAVY.test(req.originalUrl.split('?')[0]) && !rateAllow(`heavy:${ip}`, 40, 1)))
+    return res.status(429).json({ error: 'Too many requests. Slow down a moment.' });
+  next();
+});
+app.use(auth.middleware);
+app.use('/api', (req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !req.originalUrl.startsWith('/api/auth/'))
+    audit.record('jav', `${req.method} ${req.originalUrl.split('?')[0]}`, '', `fields: ${Object.keys(req.body || {}).join(',')}`);
+  next();
+});
+
+const wrap = (fn, schema) => async (req, res) => {
+  try {
+    if (schema) { const p = schema.safeParse(req.body ?? {}); if (!p.success) throw new Error(`Invalid input: ${p.error.issues.map(i => `${i.path.join('.') || 'body'}: ${i.message}`).slice(0, 3).join('; ')}`); req.body = p.data; }
+    res.json((await fn(req, res)) ?? { ok: true });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 };
 
 function snapshot() {
@@ -75,10 +105,10 @@ app.patch('/api/projects/:id', wrap((r) => projects.updateProject(r.params.id, r
 app.delete('/api/projects/:id', wrap((r) => projects.removeProject(r.params.id)));
 
 // Sessions
-app.post('/api/sessions', wrap((r) => sessions.create({ ...r.body, by: 'jav' })));
+app.post('/api/sessions', wrap((r) => sessions.create({ ...r.body, by: 'jav' }), schemas.session));
 app.patch('/api/sessions/:id', wrap((r) => sessions.update(r.params.id, r.body)));
 app.delete('/api/sessions/:id', wrap((r) => sessions.remove(r.params.id)));
-app.post('/api/sessions/:id/message', wrap((r) => sessions.send(r.params.id, r.body.text, 'jav', r.body.files || [])));
+app.post('/api/sessions/:id/message', wrap((r) => sessions.send(r.params.id, r.body.text, 'jav', r.body.files || []), schemas.message));
 // Attachments, for thumbnails and downloads in the chat.
 app.get('/api/files/:owner/:name', (req, res) => {
   const s = req.params.owner === 'lidia' ? null : store.session(req.params.owner);
@@ -93,17 +123,59 @@ app.post('/api/sessions/:id/permission', wrap((r) =>
   ({ ok: sessions.answerPermission(r.params.id, r.body.permissionId, !!r.body.allow) })));
 
 // Lidia
-app.post('/api/lidia', wrap((r) => sessions.talkToLidia(String(r.body.text || ''), r.body.files || [])));
+app.post('/api/lidia', wrap((r) => sessions.talkToLidia(String(r.body.text || ''), r.body.files || []), schemas.lidia));
 app.post('/api/react', wrap((r) => { javReacts(String(r.body.owner), r.body.ts, r.body.emoji || ''); }));
 app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.text || ''); store.changed(); }));
 
 // Lidia's autonomy: intent model, standing directives, thought stream, priorities, escalations
 app.get('/api/intent', wrap(() => ({ model: intent.intentModel(), directives: intent.directives(), digest: intent.digest(Date.now() - 864e5) })));
-app.post('/api/directives', wrap((r) => intent.addDirective(r.body.text, 'jav')));
+app.post('/api/directives', wrap((r) => intent.addDirective(r.body.text, 'jav'), schemas.directive));
 app.delete('/api/directives/:id', wrap((r) => ({ removed: intent.removeDirective(r.params.id) })));
 app.get('/api/decisions', wrap((r) => prio.thoughtStream({ q: r.query.q, tier: r.query.tier ?? null, agentId: r.query.agent, since: Number(r.query.since) || 0, limit: Math.min(500, Number(r.query.limit) || 200) })));
 app.get('/api/priorities', wrap(() => prio.priorities()));
 app.get('/api/escalations', wrap(() => prio.escalations()));
+
+// Login (optional, off until Jav sets a passphrase)
+app.get('/api/auth/status', wrap((r) => ({ enabled: auth.enabled(), mfa: auth.mfaEnabled(), authed: auth.isAuthed(r.headers) })));
+app.post('/api/auth/setup', wrap((r) => { if (auth.enabled() && !auth.isAuthed(r.headers)) throw new Error('login required'); return auth.setup(r.body.passphrase, !!r.body.mfa); }, schemas.setup));
+app.post('/api/auth/login', wrap((r, res) => { auth.login(res, r.socket.remoteAddress || 'local', r.body.passphrase, r.body.code); }, schemas.login));
+app.post('/api/auth/refresh', wrap((r, res) => { auth.refresh(r, res); }));
+app.post('/api/auth/logout', wrap((r, res) => { auth.logout(r, res); }));
+app.post('/api/auth/disable', wrap((r) => { if (!auth.isAuthed(r.headers)) throw new Error('login required'); auth.disable(); }));
+
+// Mesh: tasks, message bus, artifacts, memory
+app.get('/api/tasks', wrap(() => taskGraph.tasks()));
+app.post('/api/tasks', wrap((r) => taskGraph.create({ ...r.body, creator: 'jav' }), schemas.task));
+app.patch('/api/tasks/:id', wrap((r) => taskGraph.setStatus(r.params.id, r.body.status, 'jav', r.body.note), schemas.taskPatch));
+app.get('/api/bus', wrap((r) => bus.view({ q: String(r.query.q || ''), agent: String(r.query.agent || ''), limit: Math.min(500, Number(r.query.limit) || 200) })));
+app.post('/api/bus', wrap((r) => bus.publish({ from: 'jav', ...r.body }), schemas.bus));
+app.get('/api/anomalies', wrap(() => store.state.anomalies || []));
+app.get('/api/artifacts', wrap(() => artifacts.list()));
+app.get('/api/artifacts/:name', wrap((r) => (r.query.a && r.query.b ? artifacts.diff(r.params.name, r.query.a, r.query.b) : r.query.history ? artifacts.history(r.params.name) : artifacts.get(r.params.name, r.query.version))));
+app.post('/api/artifacts', wrap((r) => artifacts.put(r.body.name, r.body.content, 'jav', r.body.note), schemas.artifact));
+app.get('/api/memory', wrap(() => memory.stats()));
+
+// Audit trail and replay
+app.get('/api/audit', wrap((r) => audit.query({ q: String(r.query.q || ''), actor: String(r.query.actor || ''), until: Number(r.query.until) || Infinity, since: Number(r.query.since) || 0, limit: Math.min(1000, Number(r.query.limit) || 300) })));
+app.get('/api/audit/verify', wrap(() => audit.verify()));
+
+// Kill switch, observability, data rights
+app.post('/api/kill', wrap((r) => { sessions.killAll(r.body.reason || 'Stopped by Jav', 'jav'); return { killed: true }; }, schemas.kill));
+app.post('/api/resume', wrap(() => { sessions.resumeAll('jav'); return { killed: false }; }));
+app.get('/api/metrics', (req, res) => { res.type('text/plain; version=0.0.4').send(renderMetrics({ limited: limitedCount })); });
+app.get('/api/export', (req, res) => {
+  audit.record('jav', 'data.export', '');
+  const st = store.publicState();
+  res.set('Content-Disposition', 'attachment; filename="fortress-export.json"').json({ exportedAt: new Date().toISOString(), state: { ...st, connectors: st.connectors.map(redact) },
+    tasks: taskGraph.tasks(), bus: bus.log(), decisions: intent.decisions(), directives: intent.directives(), artifacts: artifacts.list(), memory: memory.stats() });
+});
+app.post('/api/erase', wrap(() => {
+  audit.record('jav', 'data.erase', '', 'all agents, chat, memory, artifacts, tasks (audit chain kept, redacted)');
+  for (const s of [...store.state.sessions]) sessions.remove(s.id);
+  Object.assign(store.state, { lidiaChat: [], reports: [], precedents: [], preferences: [], decisions: [], directives: [], tasks: [], bus: [], anomalies: [], artifacts: {}, feed: [] });
+  memory.eraseAll(); fs.rmSync(path.join(ROOT, 'data', 'artifacts'), { recursive: true, force: true });
+  store.changed();
+}, schemas.erase));
 
 // Settings
 app.patch('/api/settings', wrap((r) => {
@@ -179,7 +251,12 @@ const broadcast = (msg) => {
   const data = JSON.stringify(msg);
   for (const c of wss.clients) if (c.readyState === 1) c.send(data);
 };
-wss.on('connection', (ws) => ws.send(JSON.stringify({ type: 'state', state: snapshot() })));
+wss.on('connection', (ws, req) => {
+  if (!hostAllowed(req.headers.host) || !auth.isAuthed(req.headers)) return ws.close(4401, 'login required');
+  const o = req.headers.origin;
+  if (o) { let oh; try { oh = new URL(o).host; } catch {} if (oh !== req.headers.host) return ws.close(4403, 'bad origin'); }
+  ws.send(JSON.stringify({ type: 'state', state: snapshot() }));
+});
 
 let pending = null;
 store.on('change', () => {
@@ -194,7 +271,9 @@ sessions.events.on('notify', ({ text, sessionId }) => {
   broadcast({ type: 'notify', title: 'Lidia', text: body, sessionId });
   if (!wss.clients.size) { try { system.termuxAction('notify', body); } catch {} }
 });
-intent.intentEvents.on('decision', (e) => broadcast({ type: 'decision', decision: e }));
+intent.intentEvents.on('decision', (e) => { broadcast({ type: 'decision', decision: e }); audit.record('lidia', `decision.${e.kind}`, e.agent, `${e.summary} -> ${e.decision}`); });
+bus.busEvents.on('message', (m) => broadcast({ type: 'bus', message: { ...m, fromName: store.session(m.from)?.name || m.from, toName: store.session(m.to)?.name || m.to } }));
+bus.busEvents.on('anomaly', (a) => broadcast({ type: 'anomaly', anomaly: a }));
 for (const ev of ['bubble', 'report', 'alert', 'visit', 'visit-end', 'lidia-live', 'lidia-reviewing']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
 
 await ensureAssets();

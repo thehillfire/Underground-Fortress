@@ -262,7 +262,7 @@ Reply with ONLY a JSON object:
  "default_answer":"<what you would answer the agent if you had to pick right now; always fill it>",
  "decision":"continue|done|escalate",
  "instruction":"<for continue: your direct reply or next instruction to the agent. If it asked a question, answer it first>",
- "delegate":[{"agent":"<a name from the list above>","instruction":"<what that agent should do, with the context from this agent's work>"}],
+ "delegate":[{"agent":"<a name from the list above>","instruction":"<the GOAL for that agent (what and why), with the context from this agent's work>","success_criteria":"<what done looks like, checkable>","constraints":"<boundaries: scope, time, tools, never spend money>","escalate_if":"<the only situations worth coming back to you for>"}],
  "message_to_jav":"<for escalate: text Jav in your own voice, see the rules>",
  "note":"<5-12 words for the ticker>",
  "health":"on_track|stalled"}
