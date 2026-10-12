@@ -8,14 +8,16 @@
 # (proot-distro) where the Linux arm64 build runs. You sign in with your Claude
 # account once (no API key). Afterwards just type:  fortress
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+AUTO="${1:-}"
 
 APP="$(cd "$(dirname "$0")/.." && pwd)"
 DISTRO=ubuntu
 say() { printf '\n\033[1;31m▌ %s\033[0m\n' "$*"; }
 
 say "[1/4] Termux packages"
-pkg update -y
-pkg install -y proot-distro git termux-tools
+pkg update -y -o Dpkg::Options::=--force-confnew
+pkg install -y -o Dpkg::Options::=--force-confnew proot-distro git termux-tools
 
 say "[2/4] Ubuntu userland (one time, ~300 MB)"
 if ! proot-distro login "$DISTRO" -- true 2>/dev/null; then
@@ -46,10 +48,16 @@ cat > "$PREFIX/bin/fortress" <<LAUNCH
 # fortress mock     start with fake sessions (no Claude usage)
 APP="$APP"
 inside() { proot-distro login $DISTRO --bind "\$APP:/root/fortress" -- bash -lc "\$1"; }
+signed_in() { inside 'test -s ~/.claude/.credentials.json || test -n "\$CLAUDE_CODE_OAUTH_TOKEN"'; }
+login() {
+  printf '\n\033[1;31m▌ Sign in to Claude\033[0m\n  Type  /login  → pick your Claude account (Pro/Max, NOT API key)\n  → long-press the link → approve → paste the code back → type  /exit\n\n'
+  inside 'claude'
+}
 case "\${1:-start}" in
-  login)  inside 'claude' ;;
+  login)  login ;;
   update) git -C "\$APP" pull --ff-only && inside 'cd /root/fortress && npm install --no-audit --no-fund' ;;
   mock|start)
+    if [ "\${1:-start}" = start ] && ! signed_in; then login; fi
     termux-wake-lock || true
     (sleep 7; termux-open-url http://127.0.0.1:4321) &
     if [ "\${1:-start}" = mock ]; then inside 'cd /root/fortress && npm run mock'; else inside 'cd /root/fortress && npm start'; fi
@@ -59,10 +67,10 @@ esac
 LAUNCH
 chmod +x "$PREFIX/bin/fortress"
 
-say "Done. Now sign in to Claude:"
-cat <<'MSG'
-  1. Run:  fortress login
-  2. In Claude, type  /login  and choose your Claude account (Pro/Max subscription), NOT an API key.
-  3. Long-press the link it prints, open it, approve, paste the code back. Then type  /exit
-  4. Run:  fortress     (the game opens in Chrome; ⋮ → Add to Home screen to install it)
-MSG
+if [ "$AUTO" = --auto ]; then
+  say "Installed. Signing you in to Claude, then the game opens."
+  echo "  Next time just open Termux and type:  fortress"
+  exec "$PREFIX/bin/fortress" start
+fi
+
+say "Done. Type  fortress  to sign in to Claude and open the game."

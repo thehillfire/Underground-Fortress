@@ -8,13 +8,12 @@ Art: dark industrial pixel art (gunmetal, grates, red emergency light) generated
 
 Everything runs on an Android phone, billed to your **Claude subscription**. Claude Code has no Android build, so a small Ubuntu layer runs inside Termux, and the fortress talks to it on `localhost`.
 
-1. Install **Termux** from F-Droid (the Play Store build is outdated).
-2. Paste this into Termux. Git asks for your GitHub username and a token, because the repo is private.
+1. Install **Termux** from F-Droid (not the Play Store).
+2. Paste this into Termux:
    ```bash
-   pkg install -y git && git clone https://github.com/thehillfire/Underground-Fortress ~/fortress && bash ~/fortress/scripts/phone-setup.sh
+   curl -fsSL https://raw.githubusercontent.com/thehillfire/Underground-Fortress/HEAD/scripts/install.sh | bash
    ```
-3. `fortress login`, then type `/login` inside Claude and pick your Claude account (Pro/Max), **not** an API key. Type `/exit` when done.
-4. `fortress`: Chrome opens the game. ⋮ → **Add to Home screen** installs it as an app.
+3. When Claude opens, type `/login`, pick your Claude account (Pro/Max, **not** API key), approve the link, then type `/exit`. The game opens in Chrome. ⋮ → **Add to Home screen** installs it.
 
 Later: `fortress` to play, `fortress update` to update, `fortress mock` to try it without using Claude. SETUP → *Claude account* confirms you are on the subscription. The fortress strips `ANTHROPIC_API_KEY` from its environment, so it can never bill per token. While the fortress runs, Termux holds a wake-lock so Android doesn't put the survivors to sleep. If the SDK's bundled Claude binary won't start on your phone, set `FORTRESS_CLAUDE_PATH=$(command -v claude)` inside Ubuntu.
 
