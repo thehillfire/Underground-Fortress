@@ -9,11 +9,28 @@ import { makeAttach, fileChips } from './attach.js';
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const api = async (method, url, body) => {
-  const res = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  let res;
+  try { res = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); }
+  catch { serverDown(); throw new Error('The fortress is asleep. Open Termux and it wakes up.'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 };
+
+// The fortress lives in Termux on this phone. If it isn't answering, say so plainly and wait for it.
+let downSince = 0, downTimer = null, downTick = null;
+function serverDown() {
+  if (downSince) return;
+  downSince = Date.now();
+  downTimer = setTimeout(() => {
+    $('#asleep').hidden = false;
+    downTick = setInterval(() => { $('#asleep-s').textContent = Math.round((Date.now() - downSince) / 1000); }, 1000);
+  }, 3500);
+}
+function serverUp() {
+  downSince = 0; clearTimeout(downTimer); clearInterval(downTick);
+  $('#asleep').hidden = true;
+}
 
 let state = null;
 let selected = null;   // session id | 'lidia' | null
@@ -40,9 +57,10 @@ function connect() {
       toast(`! ${s?.name || 'A dweller'} needs you: ${m.text}`, () => openSession(m.sessionId));
     }
   };
-  ws.onclose = () => { $('#conn').textContent = '● reconnecting'; setTimeout(connect, 1500); };
+  ws.onclose = () => { $('#conn').textContent = '● reconnecting'; serverDown(); setTimeout(connect, 1500); };
   ws.onopen = () => {
     $('#conn').textContent = '';
+    serverUp();
     // Tell the fortress Jav's real timezone (the phone's Linux layer thinks it's UTC).
     api('POST', '/api/client', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(() => {});
     loadVersion();
@@ -761,7 +779,8 @@ function mountSettings() {
       : !h.subscription ? '<b class="red">Not signed in.</b> On the phone run <code>fortress login</code>, then <code>/login</code> with your Claude account.'
       : '<b style="color:var(--green)">Signed in with your Claude subscription.</b> No API key in use.';
     const stripped = h.apiKeyStripped ? '<div class="small" style="color:var(--accent2)">An API key was set on this device. The fortress ignores it, so nothing bills per token.</div>' : '';
-    $('#g-health').innerHTML = `<div>${line}${stripped}<div class="muted small">${esc(h.platform)} · node ${esc(h.node)}</div></div>`;
+    const crash = h.lastCrash ? `<div class="small" style="color:var(--accent2)">Last hiccup the fortress recovered from: ${esc(h.lastCrash)}</div>` : '';
+    $('#g-health').innerHTML = `<div>${line}${stripped}${crash}<div class="muted small">${esc(h.platform)} · node ${esc(h.node)} · up ${Math.round((h.uptimeSec || 0) / 60)} min</div></div>`;
   }).catch(() => {});
   $('#g-install').onclick = async () => { installPrompt?.prompt(); await installPrompt?.userChoice; installPrompt = null; mount(); };
   $('#g-form').onsubmit = async (e) => {

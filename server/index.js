@@ -20,6 +20,20 @@ import * as system from './system.js';
 import { resolveUpload } from './files.js';
 import { javReacts } from './reactions.js';
 
+// One agent or request throwing must not take the whole fortress down (it used to: the phone then
+// showed "failed to fetch" until Termux was reopened). Log it, keep running.
+const CRASH_LOG = path.join(ROOT, 'data', 'crash.log');
+const noteCrash = (kind, err) => {
+  const line = `${new Date().toISOString()} ${kind}: ${err?.stack || err}\n`;
+  console.error(line);
+  try { fs.appendFileSync(CRASH_LOG, line); } catch {}
+};
+process.on('uncaughtException', (e) => noteCrash('uncaughtException', e));
+process.on('unhandledRejection', (e) => noteCrash('unhandledRejection', e));
+const lastCrash = () => {
+  try { const st = fs.statSync(CRASH_LOG); if (Date.now() - st.mtimeMs > 7 * 864e5) return null; return fs.readFileSync(CRASH_LOG, 'utf8').trim().split('\n')[0].slice(0, 300) + ` (${st.mtime.toLocaleString()})`; } catch { return null; }
+};
+
 const PORT = Number(process.env.PORT || 4321);
 const HOST = process.env.HOST || '127.0.0.1';
 const app = express();
@@ -46,6 +60,8 @@ app.get('/api/health', wrap(() => {
     mock: MOCK,
     subscription,
     apiKeyStripped: API_KEY_STRIPPED,
+    lastCrash: lastCrash(),
+    uptimeSec: Math.round(process.uptime()),
     platform: `${process.platform}-${process.arch}`,
     node: process.versions.node,
   };

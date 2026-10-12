@@ -70,7 +70,7 @@ case "\${1:-start}" in
     if curl -s -m 2 -o /dev/null http://127.0.0.1:4321/api/health; then
       echo "The fortress is already running."; termux-open-url http://127.0.0.1:4321; exit 0
     fi
-    if [ "\${1:-start}" = start ] && ! signed_in; then login; fi
+    if [ "\${1:-start}" = start ] && ! signed_in; then [ -n "\$FORTRESS_QUIET" ] && exit 1; login; fi
     termux-wake-lock || true
     # Actions the app may ask Termux to do. A fixed list: the app can never run arbitrary commands here.
     rm -f "\$APP/.termux-action"
@@ -86,13 +86,17 @@ case "\${1:-start}" in
         sleep 1
       done ) &
     watcher=\$!
-    (sleep 7; termux-open-url http://127.0.0.1:4321) &
+    if [ -z "\$FORTRESS_QUIET" ]; then (sleep 7; termux-open-url http://127.0.0.1:4321) & fi
+    crashes=0
     while :; do
       if [ "\${1:-start}" = mock ]; then inside 'cd /root/fortress && FORTRESS_MOCK=1 exec node server/index.js'; else inside 'cd /root/fortress && exec node server/index.js'; fi
       code=\$?
       [ "\$code" = 75 ] && { echo "Restarting the fortress…"; continue; }               # restart / code update
       [ "\$code" = 76 ] && { kill \$watcher 2>/dev/null; exec bash "\$APP/scripts/phone-setup.sh" --auto; }  # setup changed: rerun it
-      break
+      case "\$code" in 0|130|143) break ;; esac        # clean exit, Ctrl-C, or stopped on purpose
+      crashes=\$((crashes+1))
+      [ "\$crashes" -gt 30 ] && { echo "The fortress keeps crashing; giving up."; break; }
+      echo "The fortress stopped (code \$code). Restarting in 3 seconds…"; sleep 3
     done
     kill \$watcher 2>/dev/null || true
     termux-wake-unlock || true ;;
@@ -100,6 +104,16 @@ case "\${1:-start}" in
 esac
 LAUNCH
 chmod +x "$PREFIX/bin/fortress"
+
+# Optional: with the Termux:Boot app installed (F-Droid), the fortress starts when the phone turns on,
+# with no need to open Termux at all.
+mkdir -p "$HOME/.termux/boot"
+cat > "$HOME/.termux/boot/fortress" <<'BOOT'
+#!/data/data/com.termux/files/usr/bin/bash
+termux-wake-lock
+FORTRESS_QUIET=1 FORTRESS_NO_AUTOSTART=1 exec fortress start
+BOOT
+chmod +x "$HOME/.termux/boot/fortress"
 
 # Opening Termux starts the fortress (and opens the app) unless it's already running.
 if ! grep -q 'fortress-autostart' "$HOME/.bashrc" 2>/dev/null; then
