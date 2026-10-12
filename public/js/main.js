@@ -376,10 +376,19 @@ function refreshSession() {
     alert = `<div class="alert"><b>${esc(s.name)} asks permission</b> to use <code>${esc(s.pendingPermission.tool)}</code>
       <pre>${esc(s.pendingPermission.input)}</pre>
       <div class="row"><button class="primary" data-allow="1">Allow</button><button class="danger" data-allow="0">Deny</button></div></div>`;
+  } else if (s.status === 'error' && s.crash) {
+    alert = `<div class="alert money"><b>${esc(s.name)} crashed</b>
+      <p>Claude couldn't run this turn. The reason it gave:</p><pre>${esc(s.crash.reason)}</pre>
+      <p class="muted small">Nothing was done. Send any message to try again, or evict the agent if it keeps failing.</p>
+      <div class="row"><button class="primary" id="crash-retry">TRY AGAIN</button><button class="danger" id="crash-evict">EVICT</button></div></div>`;
   } else if (s.pendingQuestion) {
     alert = `<div class="alert"><b>Lidia doesn't know how to continue:</b><p>${esc(s.pendingQuestion)}</p><p class="muted">Your answer goes to ${esc(s.name)}, and Lidia remembers it for next time.</p></div>`;
   }
   $('#s-alert').innerHTML = alert;
+  if ($('#crash-retry')) {
+    $('#crash-retry').onclick = () => api('POST', `/api/sessions/${s.id}/retry`).catch(err => toast(err.message));
+    $('#crash-evict').onclick = async () => { if (confirm(`Evict ${s.name}? Their files stay on the phone.`)) { await api('DELETE', `/api/sessions/${s.id}`); close(); } };
+  }
   $('#s-alert').querySelectorAll('[data-allow]').forEach(b => b.onclick = () =>
     api('POST', `/api/sessions/${s.id}/permission`, { permissionId: s.pendingPermission.id, allow: b.dataset.allow === '1' }));
 

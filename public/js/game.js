@@ -380,7 +380,7 @@ function frame(now) {
   stepDefense(dt);
   for (const e of chars.values()) {
     const s = e.session;
-    const still = s && (s.status === 'done' || s.status === 'needs_jav') && !e.path.length && !e.away;
+    const still = s && (s.status === 'done' || (s.status === 'needs_jav' || s.status === 'error')) && !e.path.length && !e.away;
     if (!still) step(e, dt, s?.status === 'working' || e.away ? 120 : 55);
     else e.t += dt;
   }
@@ -414,7 +414,7 @@ function draw(now) {
   if (state) {
     for (const r of layout.rooms) {
       const ms = state.sessions.filter(s => s.projectId === r.project.id);
-      const alert = ms.some(s => s.status === 'needs_jav');
+      const alert = ms.some(s => (s.status === 'needs_jav' || s.status === 'error'));
       const mine = selected === `p:${r.project.id}` || ms.some(s => s.id === selected);
       const glow = alert ? (Math.floor(now / 350) % 2 ? '#ff2a1a' : '#5a0a06') : mine ? '#d8dde3' : null;
       const label = `${r.project.name.toUpperCase()} / ${(ROOM_LABEL[r.project.roomType] || r.project.roomType).toUpperCase()}`;
@@ -428,7 +428,7 @@ function draw(now) {
   for (const e of chars.values()) {
     const s = e.session;
     if (!s) continue;
-    const alert = s.status === 'needs_jav';
+    const alert = (s.status === 'needs_jav' || s.status === 'error');
     const anim = alert && !e.walking ? 'panic' : e.walking ? 'walk' : (s.status === 'working' || e.visiting) ? 'work' : 'rest';
     const look = art.cast?.length ? art.cast[(s.look ?? hash(s.id)) % art.cast.length] : null;
     drawCharacter(e, look ? (alert ? look.red : look.anims) : (alert ? art.chars.survivorRed : art.chars.survivor), anim, CHAR_H, {

@@ -52,7 +52,7 @@ const TOOLS = [
       projects: st.projects.map(p => ({ name: p.name, room: p.roomType, goal: p.goal, repo: st.repos.find(r => r.id === p.repoId)?.name || null,
         agents: projects.members(p.id).map(s => s.name) })),
       agents: st.sessions.map(s => ({
-        name: s.name, project: projects.project(s.projectId)?.name, status: s.status, activity: s.activity, model: s.model || st.settings.model || 'default',
+        name: s.name, project: projects.project(s.projectId)?.name, status: s.status, crashed: s.crash?.reason || null, activity: s.activity, model: s.model || st.settings.model || 'default',
         goal: s.goal, waitingOnJav: s.pendingQuestion || (s.pendingPermission ? `permission for ${s.pendingPermission.tool}` : null),
         lastReport: [...s.log].reverse().find(e => e.role === 'claude')?.text?.slice(0, 400) || null,
         spentUsd: +(s.costUsd || 0).toFixed(3),
@@ -118,6 +118,11 @@ const TOOLS = [
       const file = sessions.provideData(s.id, title, content);
       return ok(`Saved for ${s.name} at ${file}.`);
     }),
+  tool('evict_agent', "Remove an agent from the fortress for good (stops it first). Its files stay on the phone. Only when Jav asks, or for an agent that keeps crashing and has been replaced.",
+    { name: z.string() },
+    async ({ name }) => { const s = find(name); if (!s) return fail(`No agent named ${name}`); sessions.remove(s.id); return ok(`${s.name} has left the fortress.`); }),
+  tool('retry_agent', "Re-run the turn of an agent that crashed (status error).", { name: z.string() },
+    async ({ name }) => { const s = find(name); if (!s) return fail(`No agent named ${name}`); try { sessions.retry(s.id); return ok(`${s.name} is trying again.`); } catch (e) { return fail(e.message); } }),
   tool('stop_agent', "Interrupt an agent's current turn.", { name: z.string() },
     async ({ name }) => { const s = find(name); if (!s) return fail(`No agent named ${name}`); sessions.stop(s.id); return ok(`${s.name} stopped.`); }),
   tool('list_skills', 'Skills installed for every agent (name and what it is for).', {},

@@ -40,9 +40,10 @@ export async function runTurn(opts) {
       resume: resume || undefined,
       model: model || undefined,
       effort: effort || undefined,
+      // Never pass allowDangerouslySkipPermissions: Claude Code refuses to start with it as root, and on
+      // the phone everything runs as root inside proot. "Bypass" is done by approving every prompt
+      // in canUseTool instead (see sessions.js), which also works as root.
       permissionMode,
-      // Needed so the mode can be switched to bypass, now or mid-turn. The money gate is a hook and still runs.
-      allowDangerouslySkipPermissions: true,
       mcpServers,
       settingSources: ['user', 'project', 'local'], // loads skills, CLAUDE.md, settings
       systemPrompt: { type: 'preset', preset: 'claude_code', append: appendSystem },

@@ -32,6 +32,14 @@ function setStatus(s, status, activity = s.activity) {
 }
 
 migrate();
+// Agents that crashed before crashes were tracked (Lidia escalated them as "needs Jav"): mark them crashed.
+for (const s of store.state.sessions) {
+  const lastSys = [...s.log].reverse().find(e => e.role === 'system');
+  if (s.status !== 'needs_jav' || s.crash || !/exited with code|cannot be used with root/.test(lastSys?.text || '')) continue;
+  const asked = [...s.log].reverse().find(e => e.role === 'jav' || e.role === 'lidia' || e.role === 'schedule');
+  s.crash = { ts: lastSys.ts, reason: (/stderr: ([^\n]+)/.exec(lastSys.text)?.[1] || lastSys.text).slice(0, 300), text: asked?.text || s.goal, from: asked?.role || 'jav' };
+  s.status = 'error'; s.activity = 'crashed'; s.pendingQuestion = null;
+}
 
 /**
  * Where an agent's turns run. A conversation can only be resumed from the folder it
@@ -108,6 +116,16 @@ export function remove(sid) {
   store.changed();
 }
 
+/** Run the turn that crashed again. */
+export function retry(sid) {
+  const s = store.session(sid);
+  if (!s?.crash) throw new Error('Nothing to retry');
+  if (running.has(sid)) throw new Error(`${s.name} is already working`);
+  const { text, from } = s.crash;
+  turn(s, text || 'Continue where you left off.', from === 'jav' ? 'jav' : 'lidia');
+  return { ok: true };
+}
+
 /** Move an agent into another project room. */
 export function move(sid, projectId) {
   const s = store.session(sid), p = project(projectId);
@@ -127,6 +145,9 @@ export function move(sid, projectId) {
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
 const queries = new Map();   // session id -> live SDK query, for mid-turn mode changes
 const modeFor = (s) => s.permissionMode || store.state.settings.permissionMode || 'acceptEdits';
+// What Claude Code actually runs in. Bypass runs as accept-edits with every remaining prompt approved
+// by the fortress (canUseTool), because the real bypass flag can't start as root (the phone).
+const sdkMode = (s) => (modeFor(s) === 'bypassPermissions' ? 'acceptEdits' : modeFor(s));
 
 export function update(sid, patch) {
   const s = store.session(sid);
@@ -138,7 +159,7 @@ export function update(sid, patch) {
     if (m && !PERMISSION_MODES.includes(m)) throw new Error(`unknown permission mode ${m}`);
     s.permissionMode = m;
     // Like shift+tab in Claude Code: a running turn switches right away.
-    queries.get(sid)?.setPermissionMode(modeFor(s)).catch(() => {});
+    queries.get(sid)?.setPermissionMode(sdkMode(s)).catch(() => {});
   }
   store.changed();
   return s;
@@ -194,7 +215,7 @@ async function turn(s, text, from, saved = [], logged = false) {
       additionalDirectories: projectExtraDirs(s),
       resume: s.sdkSessionId,
       model: s.model || store.state.settings.model,
-      permissionMode: modeFor(s),
+      permissionMode: sdkMode(s),
       onQuery: (q) => queries.set(s.id, q),
       mcpServers: { ...mcpServersFor(), fortress: agentScheduleServer(s.id) },
       appendSystem: ownerBrief(s),
@@ -206,12 +227,18 @@ async function turn(s, text, from, saved = [], logged = false) {
         log(s, 'tool', summarizeInput(input), { tool: name });
         setStatus(s, 'working', activityFor(name));
       },
-      canUseTool: (toolName, input) => (toolName.startsWith('mcp__') && store.state.settings.autoApproveConnectors !== false
-        ? Promise.resolve({ behavior: 'allow', updatedInput: input })   // connectors Jav set up are trusted
-        : askPermission(s, toolName, input)),
+      canUseTool: (toolName, input) => {
+        // Bypass: approve everything (read each time, so switching mid-turn works). The money gate
+        // is a PreToolUse hook and has already run before this is asked.
+        if (modeFor(s) === 'bypassPermissions' && toolName !== 'ExitPlanMode') return Promise.resolve({ behavior: 'allow', updatedInput: input });
+        if (toolName.startsWith('mcp__') && store.state.settings.autoApproveConnectors !== false)
+          return Promise.resolve({ behavior: 'allow', updatedInput: input });   // connectors Jav set up are trusted
+        return askPermission(s, toolName, input);
+      },
     });
   } catch (err) {
-    out = { result: `Error: ${err.message}`, isError: true, costUsd: 0 };
+    // Claude Code itself failed (couldn't start, or died): not something Lidia can answer.
+    out = { result: `Error: ${err.message}`, isError: true, costUsd: 0, crashed: true };
   } finally {
     running.delete(s.id);
     queries.delete(s.id);
@@ -226,6 +253,16 @@ async function turn(s, text, from, saved = [], logged = false) {
     setStatus(s, 'idle', 'resting');
     return drainQueue(s);
   }
+  if (out.crashed) {
+    const reason = (/stderr: ([^\n]+)/.exec(out.result)?.[1] || out.result.replace(/^Error: /, '')).slice(0, 300);
+    s.crash = { ts: Date.now(), reason, text, from };
+    log(s, 'system', `Claude couldn't run this turn: ${reason}`);
+    store.feed(`${s.name} crashed: ${reason}`, 'alert', s.id);
+    setStatus(s, 'error', 'crashed');
+    events.emit('alert', { sessionId: s.id, text: `Crashed: ${reason}` });
+    return;   // a message from Jav retries; queued messages wait for that
+  }
+  delete s.crash;
   if (out.isError) log(s, 'system', out.result);
 
   // Jav's queued words outrank Lidia's review.

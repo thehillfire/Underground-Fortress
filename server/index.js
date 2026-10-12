@@ -69,6 +69,7 @@ app.get('/api/files/:owner/:name', (req, res) => {
   res.sendFile(file, { dotfiles: 'allow' });   // uploads live under .fortress/
 });
 app.post('/api/sessions/:id/stop', wrap((r) => sessions.stop(r.params.id)));
+app.post('/api/sessions/:id/retry', wrap((r) => sessions.retry(r.params.id)));
 app.post('/api/sessions/:id/permission', wrap((r) =>
   ({ ok: sessions.answerPermission(r.params.id, r.body.permissionId, !!r.body.allow) })));
 
