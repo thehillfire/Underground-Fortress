@@ -5,3 +5,4 @@ workspaces/
 public/assets/*.jpg
 public/assets/*.png
 public/assets/.sources.json
+.open-url

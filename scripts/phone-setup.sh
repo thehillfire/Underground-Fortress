@@ -50,12 +50,20 @@ APP="$APP"
 inside() { proot-distro login $DISTRO --bind "\$APP:/root/fortress" -- bash -lc "\$1"; }
 signed_in() { inside 'test -s ~/.claude/.credentials.json || test -n "\$CLAUDE_CODE_OAUTH_TOKEN"'; }
 login() {
-  printf '\n\033[1;31m▌ Sign in to Claude\033[0m\n  Type  /login  → pick your Claude account (Pro/Max, NOT API key)\n  → long-press the link → approve → paste the code back → type  /exit\n\n'
-  inside 'claude'
+  printf '\n\033[1;31m▌ Sign in to Claude\033[0m\n  Type  /login  → pick your Claude account (Pro/Max, NOT API key)\n  Chrome opens by itself → Authorize → Copy code → paste it back here → type  /exit\n  (If Chrome does not open: press  c  to copy the link and paste it into Chrome.)\n\n'
+  rm -f "\$APP/.open-url"
+  # Claude runs inside Ubuntu and cannot open Chrome; it drops the URL in a file and we open it.
+  ( while :; do
+      if [ -s "\$APP/.open-url" ]; then termux-open-url "\$(head -n1 "\$APP/.open-url")"; rm -f "\$APP/.open-url"; fi
+      sleep 1
+    done ) &
+  local watcher=\$!
+  inside 'mkdir -p ~/.fortress-bin && for b in xdg-open sensible-browser www-browser; do ln -sf /root/fortress/scripts/open-url ~/.fortress-bin/\$b; done; BROWSER=/root/fortress/scripts/open-url PATH=~/.fortress-bin:\$PATH claude'
+  kill \$watcher 2>/dev/null || true
 }
 case "\${1:-start}" in
   login)  login ;;
-  update) git -C "\$APP" pull --ff-only && inside 'cd /root/fortress && npm install --no-audit --no-fund' ;;
+  update) git -C "\$APP" pull --ff-only && bash "\$APP/scripts/phone-setup.sh" ;;
   mock|start)
     if [ "\${1:-start}" = start ] && ! signed_in; then login; fi
     termux-wake-lock || true

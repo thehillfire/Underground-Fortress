@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs inside Ubuntu when Claude wants to open a browser: hand the URL to Termux,
+# whose `fortress` launcher opens it in Chrome (no copying wrapped links).
+printf '%s\n' "${1:-}" > /root/fortress/.open-url
