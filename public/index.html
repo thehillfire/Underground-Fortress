@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Underground Fortress</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=VT323&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="world"></canvas>
+
+  <header id="topbar">
+    <div class="brand">UNDERGROUND FORTRESS <span id="conn"></span></div>
+    <nav>
+      <button id="btn-new" class="primary">+ DWELLER</button>
+      <button data-tab="lidia">LIDIA</button>
+      <button data-tab="repos">REPOS</button>
+      <button data-tab="connectors">CONNECTORS</button>
+      <button data-tab="skills">SKILLS</button>
+      <button data-tab="settings">SETTINGS</button>
+    </nav>
+    <div id="stats"></div>
+  </header>
+
+  <aside id="panel">
+    <div class="panel-head"><h3 id="panel-title"></h3><button id="panel-close" aria-label="Close">✕</button></div>
+    <div id="panel-body"></div>
+  </aside>
+
+  <div id="feed"></div>
+  <div id="controls">
+    <button id="home" title="Back to the bridge">⌂</button>
+    <button id="zoom-out" title="Zoom out">−</button>
+    <button id="zoom-in" title="Zoom in">＋</button>
+  </div>
+  <button id="mic" title="Talk (M)">MIC</button>
+  <div id="transcript"></div>
+  <div id="toasts"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

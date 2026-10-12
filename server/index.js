@@ -1,0 +1,107 @@
+// Underground Fortress server: REST + WebSocket on top of the Claude Agent SDK.
+import http from 'node:http';
+import path from 'node:path';
+import express from 'express';
+import { WebSocketServer } from 'ws';
+import { store, ROOT, id } from './store.js';
+import * as sessions from './sessions.js';
+import * as skills from './skills.js';
+import * as repos from './repos.js';
+import { CATALOG, searchRegistry, redact } from './connectors.js';
+import { MOCK } from './agent.js';
+import { ensureAssets } from './assets.js';
+
+const PORT = Number(process.env.PORT || 4321);
+const HOST = process.env.HOST || '127.0.0.1';
+const app = express();
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(ROOT, 'public')));
+
+const wrap = (fn) => async (req, res) => {
+  try { res.json((await fn(req)) ?? { ok: true }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+};
+
+function snapshot() {
+  const st = store.publicState();
+  return { ...st, connectors: st.connectors.map(redact), skills: skills.installed(), mock: MOCK };
+}
+
+app.get('/api/state', wrap(() => snapshot()));
+
+// Sessions
+app.post('/api/sessions', wrap((r) => sessions.create(r.body)));
+app.patch('/api/sessions/:id', wrap((r) => sessions.update(r.params.id, r.body)));
+app.delete('/api/sessions/:id', wrap((r) => sessions.remove(r.params.id)));
+app.post('/api/sessions/:id/message', wrap((r) => sessions.send(r.params.id, r.body.text, 'jav')));
+app.post('/api/sessions/:id/stop', wrap((r) => sessions.stop(r.params.id)));
+app.post('/api/sessions/:id/permission', wrap((r) =>
+  ({ ok: sessions.answerPermission(r.params.id, r.body.permissionId, !!r.body.allow) })));
+
+// Lidia
+app.post('/api/lidia', wrap((r) => sessions.talkToLidia(String(r.body.text || ''))));
+app.put('/api/orders', wrap((r) => { store.state.standingOrders = String(r.body.text || ''); store.changed(); }));
+
+// Settings
+app.patch('/api/settings', wrap((r) => {
+  const allowed = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'speakLidia', 'skillSources'];
+  for (const k of allowed) if (k in r.body) store.state.settings[k] = r.body[k];
+  store.changed();
+}));
+
+// Repositories
+app.post('/api/repos', wrap((r) => repos.connect(r.body.url)));
+app.delete('/api/repos/:id', wrap((r) => repos.disconnect(r.params.id)));
+
+// Connectors (MCP servers)
+app.get('/api/connectors/catalog', wrap(() => CATALOG));
+app.get('/api/connectors/search', wrap((r) => searchRegistry(String(r.query.q || ''))));
+app.post('/api/connectors', wrap((r) => {
+  const b = r.body;
+  const name = String(b.name || '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+  if (!name) throw new Error('name required');
+  if (store.state.connectors.some(c => c.name === name)) throw new Error(`"${name}" is already connected`);
+  const c = { id: id('c'), name, label: b.label || name, type: b.type, url: b.url, command: b.command,
+              args: b.args || [], env: b.env || {}, token: b.token || undefined, enabled: true };
+  store.state.connectors.push(c);
+  store.feed(`Connector ${c.label} wired into the fortress.`, 'info');
+  return redact(c);
+}));
+app.patch('/api/connectors/:id', wrap((r) => {
+  const c = store.state.connectors.find(x => x.id === r.params.id);
+  if (!c) throw new Error('not found');
+  if ('enabled' in r.body) c.enabled = !!r.body.enabled;
+  if (r.body.token) c.token = r.body.token;
+  store.changed();
+  return redact(c);
+}));
+app.delete('/api/connectors/:id', wrap((r) => {
+  store.state.connectors = store.state.connectors.filter(c => c.id !== r.params.id);
+  store.changed();
+}));
+
+// Skills
+app.get('/api/skills/find', wrap((r) => skills.find(String(r.query.q || ''), String(r.query.repo || ''))));
+app.post('/api/skills/install', wrap((r) => skills.install(r.body.repo, r.body.dir)));
+app.delete('/api/skills/:dir', wrap((r) => skills.uninstall(r.params.dir)));
+
+// Live updates
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+const broadcast = (msg) => {
+  const data = JSON.stringify(msg);
+  for (const c of wss.clients) if (c.readyState === 1) c.send(data);
+};
+wss.on('connection', (ws) => ws.send(JSON.stringify({ type: 'state', state: snapshot() })));
+
+let pending = null;
+store.on('change', () => {
+  if (pending) return;
+  pending = setTimeout(() => { pending = null; broadcast({ type: 'state', state: snapshot() }); }, 120);
+});
+for (const ev of ['bubble', 'report', 'alert']) sessions.events.on(ev, (p) => broadcast({ type: ev, ...p }));
+
+await ensureAssets();
+server.listen(PORT, HOST, () => {
+  console.log(`\n  ⛏  Underground Fortress is open at http://${HOST}:${PORT}${MOCK ? '  (mock mode: no real Claude calls)' : ''}\n`);
+});
