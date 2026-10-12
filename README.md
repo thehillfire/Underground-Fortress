@@ -37,7 +37,8 @@ You need Node 20+ and Claude Code authentication on this machine, either a logge
 | **Repos** | `owner/repo` or any git URL, cloned with your git credentials and assignable to any room. |
 | **Connectors** | MCP servers, given to every dweller. There's a quick-add shelf, a search over the official MCP registry ("any app"), and custom http/sse/stdio servers with an optional bearer token. |
 | **Skills** | The finder shallow-clones skill repos (default `anthropics/skills`, add your own in Settings), searches `SKILL.md` files, and installs to `~/.claude/skills`, so every dweller gets them. |
-| **Voice** | Press `M` or the MIC button. Start with "Lidia, …" or a dweller's name to address them. Lidia talks back (browser TTS). Needs Chrome/Edge/Safari speech recognition. |
+| **Voice** | Press `M` or the MIC button. Start with "Lidia, …" or a dweller's name to address them. Replies are text only. Needs Chrome/Edge/Safari speech recognition. |
+| **Chats** | Tap CHATS (top left) for everyone you can talk to: whoever needs you on top, then working, then idle, with unread counts. Tap one and the camera flies to them and opens their chat. |
 | **World** | Drag to pan, wheel or pinch to zoom, click anyone to open their panel. `L` opens Lidia, `Esc` closes. |
 | **Ledger** | Tap the gold $ in the top bar to see what this month's work would have cost at API list prices, next to your plan's price ($200 for Max 20x). Broken down by survivor and Lidia, with a month-end pace. The real extra charge on your subscription is $0. |
 | **Settings** | Dweller model, Lidia's model, permission mode, max automatic nudges before Lidia asks you, voice on/off. |

@@ -238,3 +238,37 @@ body.listening #mic, body.listening .mic-inline { background: #a3170f !important
 #voicebar.err { border-color: var(--accent2); } #voicebar.err .vb-dot { background: var(--accent2); } #voicebar.err .vb-waves { display: none; }
 #voicebar.err .vb-to { color: var(--accent2); } #voicebar.err .vb-text { font-size: 19px; color: var(--text); }
 @media (min-width: 900px) { #voicebar { left: 50%; right: auto; width: 520px; transform: translateX(-50%); } }
+
+/* ---- chats dropdown */
+#chats-btn { min-height: 32px; padding: 4px 10px; display: flex; align-items: center; gap: 6px; font-size: 11px; position: relative; }
+#chats-btn i { font-style: normal; font-size: 12px; color: var(--muted); }
+#chats-btn.active { border-color: var(--accent); }
+#chats-badge { background: var(--accent2); color: #120a00; font-size: 10px; padding: 1px 5px; font-weight: 400; }
+#chats-badge.red { background: var(--red); color: #fff; animation: pulse 0.8s steps(2) infinite; }
+#hud .brand { font-size: 11px; }
+#chats { position: fixed; top: calc(var(--hud-h) + var(--safe-t)); left: 0; right: 0; z-index: 35; max-height: min(72dvh, 72vh);
+  display: flex; flex-direction: column; background: #0b0a0d; border-bottom: 3px solid var(--accent); box-shadow: 0 14px 30px rgba(0,0,0,0.7); }
+#chats[hidden] { display: none; }
+#chats-q { border-width: 0 0 2px; font-size: 20px; }
+#chats-list { overflow-y: auto; }
+.chat-row { width: 100%; display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: start; text-align: left; padding: 10px 12px;
+  min-height: 0; border: 0; border-bottom: 1px solid #1f1d22; box-shadow: none; background: transparent; font-family: "VT323", monospace; font-size: 18px; }
+.chat-row:active { background: #1a0b0e; transform: none; }
+.chat-row.alert-row { background: #22080a; }
+.chat-row .dot { width: 12px; height: 12px; margin-top: 4px; display: block; }
+.dot.red { background: var(--red); animation: pulse 0.8s steps(2) infinite; } .dot.green { background: var(--green); } .dot.blue { background: #5a9cff; }
+.dot.grey { background: #4a4850; } .dot.gold { background: var(--accent2); }
+.cr-main { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.cr-main b { font-family: var(--pixel); font-weight: 400; font-size: 11px; color: #ffd9d2; }
+.cr-main small { color: var(--muted); font-size: 15px; }
+.cr-last { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.alert-row .cr-last { color: #ffb0a6; }
+.cr-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.cr-side small { color: var(--muted); font-size: 15px; }
+.cr-side em { font-style: normal; background: var(--accent); color: #fff; font-size: 14px; padding: 0 6px; }
+@media (min-width: 900px) { #chats { left: 12px; right: auto; width: 420px; border: 3px solid var(--accent); } }
+/* Talking to a survivor: shorter sheet so their room stays visible above it */
+@media (max-width: 899px) { #panel.compact { height: min(56dvh, 56vh); } }
+/* Keep the message box reachable without scrolling */
+#s-form { position: sticky; bottom: -20px; z-index: 2; background: var(--panel); padding: 8px 0 12px; margin-bottom: -12px; box-shadow: 0 -8px 12px var(--panel); }
+#panel.compact .log { min-height: 120px; }

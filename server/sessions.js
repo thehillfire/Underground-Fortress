@@ -265,6 +265,6 @@ export async function talkToLidia(text) {
   } catch (err) { reply = `I can't reach the surface right now: ${err.message}`; }
   st.lidiaChat.push({ ts: Date.now(), role: 'lidia', text: reply, acts });
   store.changed();
-  events.emit('bubble', { who: 'lidia', text: reply, speak: true });
+  events.emit('bubble', { who: 'lidia', text: reply });
   return { reply, acts };
 }

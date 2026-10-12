@@ -20,9 +20,14 @@
   <canvas id="world"></canvas>
 
   <header id="hud">
-    <div class="brand">UNDERGROUND FORTRESS <span id="conn"></span></div>
+    <button id="chats-btn" aria-haspopup="true" aria-expanded="false"><span>CHATS</span><b id="chats-badge" hidden></b><i>&#9662;</i></button>
+    <div class="brand">FORTRESS <span id="conn"></span></div>
     <div id="stats"></div>
   </header>
+  <div id="chats" hidden>
+    <input id="chats-q" type="search" placeholder="Find a survivor…" autocomplete="off">
+    <div id="chats-list"></div>
+  </div>
   <div id="ticker"></div>
 
   <aside id="panel" aria-hidden="true">

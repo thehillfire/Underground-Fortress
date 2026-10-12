@@ -1,4 +1,4 @@
-// Talk to the fortress with your microphone (Web Speech API) and hear Lidia reply.
+// Talk to the fortress with your microphone (Web Speech API). Replies are text only.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 export const voiceSupported = !!SR;
 
@@ -57,24 +57,6 @@ export function stop() { try { rec?.stop(); } catch {} }
 /** Stop and throw away what was heard. */
 export function cancel() { cancelled = true; try { rec?.abort(); } catch {} }
 export const isListening = () => listening;
-
-let voice = null;
-function pickVoice() {
-  const vs = speechSynthesis.getVoices();
-  return vs.find(v => /female|samantha|victoria|zira|aria|jenny|google uk english female/i.test(v.name)) ||
-         vs.find(v => v.lang?.startsWith((navigator.language || 'en').slice(0, 2))) || vs[0] || null;
-}
-if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => { voice = pickVoice(); };
-
-export function speak(text) {
-  if (!('speechSynthesis' in window) || !text) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  voice = voice || pickVoice();
-  if (voice) u.voice = voice;
-  u.rate = 1.03; u.pitch = 1.0;
-  speechSynthesis.speak(u);
-}
 
 /**
  * Route a spoken sentence: "Lidia, ..." goes to the captain, "<name>, ..." to that

@@ -27,13 +27,11 @@ function connect() {
     if (m.type === 'state') { state = m.state; game.setState(state); refresh(); }
     else if (m.type === 'bubble') {
       game.bubble(m);
-      if (m.who === 'lidia' && m.speak && state?.settings.speakLidia) voice.speak(m.text);
     } else if (m.type === 'report') game.report(m.sessionId);
     else if (m.type === 'alert') {
       const s = state?.sessions.find(x => x.id === m.sessionId);
       chime();
       toast(`! ${s?.name || 'A dweller'} needs you: ${m.text}`, () => openSession(m.sessionId));
-      if (state?.settings.speakLidia) voice.speak(`Jav, ${s?.name || 'a dweller'} needs you.`);
     }
   };
   ws.onclose = () => { $('#conn').textContent = '● reconnecting'; setTimeout(connect, 1500); };
@@ -47,6 +45,7 @@ function open(t, sel = null) {
   tab = t; selected = sel ?? (t === 'lidia' ? 'lidia' : null);
   game.select(selected);
   panel.classList.add('open');
+  panel.classList.toggle('compact', t === 'session');
   panel.setAttribute('aria-hidden', 'false');
   document.body.classList.add('sheet-open');
   const navTab = ARMORY.includes(t) ? 'connectors' : t === 'session' || t === 'new' ? null : t;
@@ -65,10 +64,11 @@ function close() {
 }
 function openLidia(start) {
   game.select('lidia');
+  markSeen('lidia');
   document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'lidia'));
   talk.openTalk(start);
 }
-function openSession(id) { open('session', id); game.focusOn(id, sheetInset()); }
+function openSession(id) { open('session', id); markSeen(id); game.flyTo(id, sheetInset()); }
 const sheetInset = () => (innerWidth < 900 ? panel.offsetHeight : 0);
 
 $('#panel-close').onclick = close;
@@ -113,6 +113,9 @@ function mount() {
 function refresh() {
   if (!state) return;
   talk.update(state);
+  renderChats();
+  if (tab === 'session' && selected) markSeen(selected);
+  if (talk.isOpen()) markSeen('lidia');
   renderTopbar();
   renderFeed();
   if (!tab) return;
@@ -141,6 +144,70 @@ function renderFeed() {
   $('#ticker').innerHTML = last ? item(last) : '';
   document.querySelectorAll('#feed [data-sid], #ticker [data-sid]').forEach(el => el.onclick = () => openSession(el.dataset.sid));
 }
+
+// ---- chats dropdown: everyone you can talk to, whoever needs you first
+const seenKey = 'fortress-seen';
+const seen = (() => { try { return JSON.parse(localStorage.getItem(seenKey)) || {}; } catch { return {}; } })();
+function markSeen(id) { seen[id] = Date.now(); try { localStorage.setItem(seenKey, JSON.stringify(seen)); } catch {} }
+const RANK = { needs_jav: 0, reporting: 1, working: 1, idle: 2, error: 2, done: 3 };
+const DOT = { needs_jav: 'red', reporting: 'blue', working: 'green', done: 'grey' };
+function ago(ts) {
+  if (!ts) return '';
+  const m = Math.round((Date.now() - ts) / 60000);
+  return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+}
+function chatRows() {
+  const lastL = state.lidiaChat[state.lidiaChat.length - 1];
+  const lidiaUnread = state.lidiaChat.filter(m => m.role === 'lidia' && m.ts > (seen.lidia || 0)).length;
+  const rows = [{ id: 'lidia', name: 'CPT. LIDIA', sub: 'Captain · all reports', dot: 'gold', rank: -1,
+    last: lastL ? `${lastL.role === 'jav' ? 'You: ' : ''}${lastL.text}` : 'Tap to text your captain', ts: lastL?.ts, unread: lidiaUnread }];
+  for (const s of state.sessions) {
+    const talk = s.log.filter(e => e.role === 'claude' || e.role === 'lidia' || e.role === 'jav');
+    const l = talk[talk.length - 1];
+    const ask = s.pendingPermission ? `Asks permission: ${s.pendingPermission.tool}` : s.pendingQuestion;
+    rows.push({ id: s.id, name: s.name.toUpperCase(), sub: `${s.roomType} · ${s.model || 'default'} · ${s.status === 'working' ? s.activity : (STATUS_LABEL[s.status] || s.status)}`,
+      dot: DOT[s.status] || 'grey', rank: RANK[s.status] ?? 2, alert: !!ask,
+      last: ask || (l ? `${l.role === 'jav' ? 'You: ' : l.role === 'lidia' ? 'Lidia: ' : ''}${l.text}` : 'No messages yet'),
+      ts: s.log[s.log.length - 1]?.ts || s.createdAt, unread: s.log.filter(e => (e.role === 'claude' || e.role === 'lidia') && e.ts > (seen[s.id] || 0)).length });
+  }
+  return rows.sort((a, b) => a.rank - b.rank || (b.ts || 0) - (a.ts || 0));
+}
+function renderChats() {
+  const red = state.sessions.filter(s => s.status === 'needs_jav').length;
+  const rows = chatRows();
+  const unread = rows.reduce((n, r) => n + r.unread, 0);
+  const badge = $('#chats-badge');
+  badge.hidden = !(red || unread);
+  badge.textContent = red ? `${red}!` : unread;
+  badge.className = red ? 'red' : '';
+  if ($('#chats').hidden) return;
+  const q = $('#chats-q').value.trim().toLowerCase();
+  $('#chats-list').innerHTML = rows.filter(r => !q || `${r.name} ${r.sub} ${r.last}`.toLowerCase().includes(q)).map(r => `
+    <button class="chat-row ${r.alert ? 'alert-row' : ''}" data-chat="${esc(r.id)}">
+      <i class="dot ${r.dot}"></i>
+      <span class="cr-main"><b>${esc(r.name)}</b><small>${esc(r.sub)}</small><span class="cr-last">${esc(r.last).slice(0, 140)}</span></span>
+      <span class="cr-side"><small>${ago(r.ts)}</small>${r.unread ? `<em>${r.unread}</em>` : ''}</span>
+    </button>`).join('') || '<p class="muted" style="padding:10px">No one matches.</p>';
+}
+function toggleChats(force) {
+  const box = $('#chats');
+  const show = force ?? box.hidden;
+  box.hidden = !show;
+  $('#chats-btn').setAttribute('aria-expanded', String(show));
+  $('#chats-btn').classList.toggle('active', show);
+  if (show) { $('#chats-q').value = ''; renderChats(); }
+}
+$('#chats-btn').onclick = (e) => { e.stopPropagation(); toggleChats(); };
+$('#chats-q').oninput = renderChats;
+$('#chats-list').onclick = (e) => {
+  const id = e.target.closest('[data-chat]')?.dataset.chat;
+  if (!id) return;
+  toggleChats(false);
+  if (talk.isOpen()) talk.closeTalk();
+  if (id === 'lidia') { close(); game.flyTo('lidia'); openLidia('chat'); }
+  else openSession(id);
+};
+document.addEventListener('pointerdown', (e) => { if (!$('#chats').hidden && !e.target.closest('#chats, #chats-btn')) toggleChats(false); });
 
 // ---- session
 const MODEL_OPTS = [['', 'Fortress default'], ['opus', 'Opus (latest)'], ['sonnet', 'Sonnet (latest)'], ['haiku', 'Haiku (latest)'],
@@ -405,7 +472,6 @@ function mountSettings() {
       <label>Lidia's model <input id="g-lmodel" value="${esc(st.lidiaModel)}" placeholder="default"></label>
       <label>Permission mode <select id="g-perm">${[['default', 'Ask me for every risky tool'], ['acceptEdits', 'Auto-accept file edits, ask for the rest'], ['auto', 'Classifier decides, asks when unsure'], ['plan', 'Plan only, no changes'], ['bypassPermissions', 'Never ask (dangerous)']].map(([v, l]) => `<option value="${v}" ${v === st.permissionMode ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Max automatic nudges in a row before Lidia asks you <input id="g-max" type="number" min="1" max="50" value="${st.maxAutoTurns}"></label>
-      <label class="inline"><input type="checkbox" id="g-speak" ${st.speakLidia ? 'checked' : ''}> Lidia speaks out loud</label>
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
     </form>
@@ -428,7 +494,7 @@ function mountSettings() {
   $('#g-form').onsubmit = async (e) => {
     e.preventDefault();
     await api('PATCH', '/api/settings', { model: $('#g-model').value.trim(), lidiaModel: $('#g-lmodel').value.trim(), permissionMode: $('#g-perm').value,
-      maxAutoTurns: Number($('#g-max').value) || 6, speakLidia: $('#g-speak').checked, skillSources: $('#g-src').value.split('\n').map(s => s.trim()).filter(Boolean) });
+      maxAutoTurns: Number($('#g-max').value) || 6, skillSources: $('#g-src').value.split('\n').map(s => s.trim()).filter(Boolean) });
     toast('Settings saved');
   };
 }
@@ -615,7 +681,6 @@ talk.initTalk({
   openSession: (id) => openSession(id),
   openOrders: () => open('lidia'),
   startMic: () => startMic(),
-  speak: (t) => state?.settings.speakLidia && voice.speak(t),
   onClose: () => { game.select(selected); document.querySelectorAll('#nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (tab && !['session', 'new'].includes(tab) ? (['repos','connectors','skills'].includes(tab) ? 'connectors' : tab) : 'base'))); },
 });
 loadArt().then(connect);

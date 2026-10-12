@@ -6,7 +6,7 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-let ctx = null;        // { api, getState, openSession, openOrders, startMic, speak, onClose }
+let ctx = null;        // { api, getState, openSession, openOrders, startMic, onClose }
 let mode = null;       // 'dialogue' | 'reports' | 'chat'
 let typing = null;     // typewriter timer
 let waiting = false;   // Jav sent a text, Lidia hasn't answered yet
@@ -41,7 +41,6 @@ export function openTalk(start = 'dialogue') {
   $('#talk-choices').hidden = false;
   const line = greeting(ctx.getState());
   type(line);
-  ctx.speak?.(line);
 }
 
 export function closeTalk() {

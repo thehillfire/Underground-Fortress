@@ -106,6 +106,16 @@ function goHome(e) {
   else e.path = [{ x: 0, level: e.level, shaft: true }, { x: 0, level: r.level, shaft: true }, door, spot];
 }
 
+let fly = null;  // camera animation in progress
+/** Smoothly move the camera to someone (same framing as focusOn). */
+export function flyTo(id, insetBottom = 0) {
+  const from = { x: cam.x, y: cam.y };
+  focusOn(id, insetBottom);
+  const to = { x: cam.x, y: cam.y };
+  cam.x = from.x; cam.y = from.y;
+  fly = { from, to, t0: performance.now(), dur: 650 };
+}
+
 /** Center on someone. `insetBottom` (screen px) keeps them above an open bottom sheet. */
 export function focusOn(id, insetBottom = 0) {
   const shift = insetBottom / 2 / cam.zoom;
@@ -133,6 +143,7 @@ function bindInput() {
   canvas.addEventListener('pointerdown', (ev) => {
     canvas.setPointerCapture(ev.pointerId);
     pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    fly = null;
     drag = { x: ev.clientX, y: ev.clientY, cx: cam.x, cy: cam.y, moved: false, pinch: null };
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
@@ -223,6 +234,12 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  if (fly) {
+    const k = Math.min(1, (now - fly.t0) / fly.dur), e = 1 - Math.pow(1 - k, 3);
+    cam.x = fly.from.x + (fly.to.x - fly.from.x) * e;
+    cam.y = fly.from.y + (fly.to.y - fly.from.y) * e;
+    if (k >= 1) fly = null;
+  }
   step(lidia, dt, 60);
   for (const z of zombies) {
     z.t += dt;

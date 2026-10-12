@@ -15,7 +15,6 @@ const DEFAULT_STATE = {
     permissionMode: 'acceptEdits',
     lidiaAutopilot: true,         // Lidia answers finished sessions automatically
     maxAutoTurns: 6,              // Lidia stops nudging after this many in a row
-    speakLidia: true,
     skillSources: ['anthropics/skills'],
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
