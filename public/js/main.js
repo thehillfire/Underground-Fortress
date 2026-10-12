@@ -489,7 +489,40 @@ function chime() {
 
 // ------------------------------------------------------------------ home-screen app
 let installPrompt = null;
-addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (tab === 'settings') mount(); });
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (tab === 'settings') mount(); renderInstallGate(); });
+addEventListener('appinstalled', () => { installPrompt = null; $('#install-gate')?.remove(); toast('Installed. Open the fortress from your home screen.'); });
+
+/** Opened in a browser tab? Offer to install as an app, right away. */
+function renderInstallGate() {
+  if (standalone()) return;
+  try { if (localStorage.getItem('fortress-install-later') === new Date().toDateString()) return; } catch {}
+  let gate = $('#install-gate');
+  if (!gate) {
+    gate = document.createElement('div');
+    gate.id = 'install-gate';
+    document.body.appendChild(gate);
+  }
+  gate.innerHTML = `
+    <div class="gate-box">
+      <img src="icons/icon-192.png" alt="" width="96" height="96">
+      <h3>INSTALL THE FORTRESS</h3>
+      <p>Run it as an app: its own icon, full screen, no browser bar.</p>
+      ${installPrompt
+        ? '<button class="primary" id="gate-install">INSTALL APP</button>'
+        : '<p class="gate-manual">Tap Chrome\'s <b>⋮</b> menu (top right) → <b>Install app</b><br>(or <b>Add to Home screen</b> → <b>Install</b>)</p>'}
+      <button id="gate-later" class="small">NOT NOW</button>
+    </div>`;
+  $('#gate-install')?.addEventListener('click', async () => {
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    installPrompt = null;
+    if (outcome === 'accepted') gate.remove(); else renderInstallGate();
+  });
+  $('#gate-later').onclick = () => { try { localStorage.setItem('fortress-install-later', new Date().toDateString()); } catch {} gate.remove(); };
+}
+// Give Chrome a moment to offer its install prompt; fall back to menu instructions.
+setTimeout(renderInstallGate, 1200);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 // ------------------------------------------------------------------ boot

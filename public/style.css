@@ -210,3 +210,13 @@ body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-in
 .ledger-row { display: grid; grid-template-columns: 1fr 90px auto; gap: 8px; align-items: center; font-size: 19px; padding: 3px 0; border-bottom: 1px solid #1f1d22; }
 .ledger-row i { height: 10px; background: #7a1420; display: block; }
 .ledger-row b { font-weight: 400; color: var(--accent2); min-width: 64px; text-align: right; }
+
+/* ---- install gate (opened in a browser tab) */
+#install-gate { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px; background: rgba(5,4,6,0.88); }
+.gate-box { width: min(360px, 100%); background: #0b0a0d; border: 3px solid #d8d4cc; box-shadow: 0 0 0 3px #0b0a0d, 0 0 40px rgba(255,40,30,0.3);
+  padding: 22px 18px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.gate-box img { image-rendering: pixelated; border: 2px solid #9a1420; }
+.gate-box h3 { margin: 0; font-family: var(--pixel); font-weight: 400; font-size: 15px; color: var(--accent); }
+.gate-box p { margin: 0; font-size: 21px; }
+.gate-box .gate-manual { background: #1c1b1f; border: 2px dashed var(--accent2); padding: 10px; color: var(--text); }
+.gate-box .primary { width: 100%; min-height: 54px; font-size: 14px; }
