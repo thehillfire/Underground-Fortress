@@ -87,6 +87,7 @@ function snapshot() {
 app.get('/api/state', wrap(() => snapshot()));
 
 // Which Claude account will the dwellers run on?
+app.get('/api/slots', wrap(() => sessions.slotInfo()));
 app.get('/api/health', wrap(() => {
   const home = os.homedir();
   const subscription = !!process.env.CLAUDE_CODE_OAUTH_TOKEN || fs.existsSync(path.join(home, '.claude', '.credentials.json'));
@@ -298,7 +299,7 @@ startUsagePolling();
 startScheduler(sessions.send);
 setInterval(() => { projects.sweepEphemeral(); for (const x of store.state.sessions) memory.consolidate(x.id); }, 60_000).unref();
 server.listen(PORT, HOST, () => {
-  runstate.boot();
+  runstate.boot(() => ({ working: store.state.sessions.filter(x => x.status === 'working').length, agents: store.state.sessions.length }));
   sessions.recoverInterrupted();
   console.log(`\n  ⛏  Underground Fortress is open at http://${HOST}:${PORT}${MOCK ? '  (mock mode: no real Claude calls)' : ''}\n`);
 });

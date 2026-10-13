@@ -748,6 +748,7 @@ function mountSettings() {
       <label class="inline"><input type="checkbox" id="g-autoconn" ${st.autoApproveConnectors !== false ? 'checked' : ''}> Agents use connected apps without asking</label>
       <p class="muted small">Money is never automatic: purchases, payments, transfers and bookings always wait for you, whatever these settings say.</p>
       <label>Pause self-improvement when usage passes (%) <input id="g-reserve" type="number" min="10" max="100" value="${st.reserveAt ?? 85}"></label>
+      <label>Agents working at the same time (the rest wait in line; fewer is steadier on a phone) <input id="g-conc" type="number" min="1" max="12" value="${st.maxConcurrent ?? 3}"></label>
       <label>Max automatic nudges in a row before Lidia asks you <input id="g-max" type="number" min="1" max="50" value="${st.maxAutoTurns}"></label>
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
@@ -809,7 +810,7 @@ function mountSettings() {
   api('GET', '/api/health').then(h => {
     const k = h.lastKilled;
     $('#g-stable').innerHTML = k
-      ? `<b>Android stopped the fortress</b> ${new Date(k.diedAbout).toLocaleString()} after about ${k.uptimeMin} min of running. That's Android killing Termux, not a crash. Fix below.`
+      ? `<b>Android stopped the fortress</b> ${new Date(k.diedAbout).toLocaleString()} after about ${k.uptimeMin} min of running${k.working != null ? `, with ${k.working} agent${k.working === 1 ? '' : 's'} working` : ''}${k.memMB != null ? ` and ${k.memMB} MB of memory free (lowest ${k.minMemMB} MB)` : ''}. ${k.memMB != null && k.memMB < 500 ? 'Low memory is the likely cause: lower "Agents working at the same time" above.' : 'That is Android killing Termux, not a crash.'}`
       : 'No outside shutdowns recorded this week.';
     const line = h.mock ? '<b>Mock mode.</b> Survivors are fake; no Claude usage.'
       : !h.subscription ? '<b class="red">Not signed in.</b> On the phone run <code>fortress login</code>, then <code>/login</code> with your Claude account.'
@@ -822,7 +823,7 @@ function mountSettings() {
   $('#g-form').onsubmit = async (e) => {
     e.preventDefault();
     await api('PATCH', '/api/settings', { model: $('#g-model').value.trim(), lidiaModel: $('#g-lmodel').value.trim(), permissionMode: $('#g-perm').value,
-      maxAutoTurns: Number($('#g-max').value) || 6, refineEnabled: $('#g-refine').checked,
+      maxAutoTurns: Number($('#g-max').value) || 6, maxConcurrent: Math.max(1, Math.min(12, Math.round(Number($('#g-conc').value) || 3))), refineEnabled: $('#g-refine').checked,
       refineRounds: Math.max(0, Number($('#g-rounds').value) || 0), reviewEvery: Math.max(1, Number($('#g-every').value) || 3),
       autoApproveConnectors: $('#g-autoconn').checked, reserveAt: Math.min(100, Math.max(10, Number($('#g-reserve').value) || 85)), skillSources: $('#g-src').value.split('\n').map(s => s.trim()).filter(Boolean) });
     toast('Settings saved');

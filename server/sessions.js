@@ -212,6 +212,31 @@ export function update(sid, patch) {
   return s;
 }
 
+// ------------------------------------------------------------------ concurrency
+const slots = { active: 0, waiters: [] };
+const maxSlots = () => Math.max(1, Math.min(12, Number(store.state.settings.maxConcurrent) || 3));
+/** Resolves true when this turn may start, false if it was stopped while waiting in line. */
+function acquireSlot(s, ac) {
+  if (slots.active < maxSlots()) { slots.active++; return Promise.resolve(true); }
+  return new Promise((resolve) => {
+    const w = { s, resolve };
+    slots.waiters.push(w);
+    const mark = () => slots.waiters.forEach((x, i) => { x.s.waitingSlot = i + 1; setStatus(x.s, 'working', `waiting for a free slot (${i + 1} in line)`); });
+    mark();
+    ac.signal.addEventListener('abort', () => {
+      const i = slots.waiters.indexOf(w);
+      if (i >= 0) { slots.waiters.splice(i, 1); delete s.waitingSlot; resolve(false); mark(); }
+    }, { once: true });
+  });
+}
+function releaseSlot() {
+  slots.active = Math.max(0, slots.active - 1);
+  while (slots.waiters.length && slots.active < maxSlots()) {
+    const w = slots.waiters.shift(); slots.active++; delete w.s.waitingSlot; w.resolve(true);
+  }
+}
+export const slotInfo = () => ({ active: slots.active, waiting: slots.waiters.length, max: maxSlots() });
+
 // ------------------------------------------------------------------ live activity
 /** Post what the agent is doing right now (built from its real log) into its chat, with its latest screenshot. */
 function postStatus(s, lead = '') {
@@ -379,6 +404,14 @@ async function turn(s, text, from, saved = [], logged = false) {
 
   const ac = new AbortController();
   running.set(s.id, ac);
+  // Only a few agents run at once: more than that and the phone runs out of memory and Android kills the fortress.
+  if (!(await acquireSlot(s, ac))) {
+    running.delete(s.id);
+    log(s, 'system', 'Stopped by Jav.');
+    setStatus(s, 'idle', 'resting');
+    return drainQueue(s);
+  }
+  setStatus(s, 'working', 'thinking');
   let out;
   try {
     out = await runTurn({
@@ -424,6 +457,7 @@ async function turn(s, text, from, saved = [], logged = false) {
   } finally {
     running.delete(s.id);
     queries.delete(s.id);
+    releaseSlot();
   }
   if (out.sessionId) s.sdkSessionId = out.sessionId;
   if (!out.isError) delete s.moveNote;
