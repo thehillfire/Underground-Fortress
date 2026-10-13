@@ -1,0 +1,46 @@
+name: Android spike
+# Builds the spike app: a foreground service that runs a bundled arm64 program and logs battery and uptime.
+on:
+  push:
+    paths: ['android-spike/**', '.github/workflows/spike.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: write   # publishes the APK to public/downloads so the fortress can serve it
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ github.ref_name }}' }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.24' }
+      - name: Build the arm64 program
+        working-directory: android-spike/fortresslet
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o ../app/src/main/jniLibs/arm64-v8a/libfortresslet.so .
+          file ../app/src/main/jniLibs/arm64-v8a/libfortresslet.so
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+      - name: Build the APK
+        working-directory: android-spike
+        run: gradle --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fortress-spike-apk
+          path: android-spike/app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish to the fortress downloads
+        run: |
+          mkdir -p public/downloads
+          cp android-spike/app/build/outputs/apk/debug/app-debug.apk public/downloads/fortress-spike.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/downloads/fortress-spike.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "Build spike APK [skip ci]"
+            git pull --rebase origin "${{ github.ref_name }}"
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi
