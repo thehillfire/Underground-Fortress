@@ -21,6 +21,25 @@ manual start, no waiting. The app owns the server.
 4. Restart the server from the service if it exits (the current watchdog logic moves here).
 5. Open the web UI from the app's main screen.
 
+## Findings so far (checked, not guessed)
+
+- [Certain] Claude Code ships as a **native binary per platform**, not as JavaScript. The `linux-arm64-musl` build is
+  248 MB, aarch64, and dynamically linked against **musl** libc (`/lib/ld-musl-aarch64.so.1`). It does not need Ubuntu.
+  This removes proot and the Ubuntu rootfs from the plan, provided we can supply a musl C library on the phone.
+- [Certain] The fortress server is Node.js. Official Node.js builds for Linux arm64 are **glibc**, which won't run on Android
+  (bionic). We need a Node.js built for musl or for Android.
+- [Certain] This sandbox cannot run arm64 programs (no emulator) and cannot reach Alpine's package mirror, Termux's
+  package repository, or F-Droid. Only the phone can test arm64 execution.
+- [Likely] Zig (0.17.0, on PyPI) includes musl's C sources and can cross-compile for aarch64-linux-musl. That is the
+  route to a musl libc we control. It is unverified until it runs on the phone.
+
+## Remaining blockers for option 1
+
+1. A musl libc for arm64, bundled in the app (from Zig's musl sources, or another source). Needed to run Claude.
+2. A musl-linked or Android-linked Node.js, bundled in the app, to run the fortress server. Or the server gets ported.
+3. First-run download of the Claude binary from the npm registry on the phone.
+4. Battery design: no wake lock; the service sleeps when nothing is working; a cap on concurrent agents (3 by default, already built).
+
 ## Open questions (answered by a spike, not by guessing)
 
 | # | Question | Why it matters | How to find out |
