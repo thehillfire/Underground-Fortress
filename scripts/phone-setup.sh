@@ -66,6 +66,7 @@ login() {
 case "\${1:-start}" in
   login)  login ;;
   update) git -C "\$APP" pull --ff-only && bash "\$APP/scripts/phone-setup.sh" ;;
+  fix-killer) bash "\$APP/scripts/fix-killer.sh" ;;
   mock|start)
     if curl -s -m 2 -o /dev/null http://127.0.0.1:4321/api/health; then
       echo "The fortress is already running."; termux-open-url http://127.0.0.1:4321; exit 0

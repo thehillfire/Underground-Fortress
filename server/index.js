@@ -33,6 +33,7 @@ import { allow as rateAllow, limitedCount } from './ratelimit.js';
 import { isKilled } from './safety.js';
 import { schemas } from './schemas.js';
 import { renderMetrics } from './metrics.js';
+import * as runstate from './runstate.js';
 
 // One agent or request throwing must not take the whole fortress down (it used to: the phone then
 // showed "failed to fetch" until Termux was reopened). Log it, keep running.
@@ -94,6 +95,7 @@ app.get('/api/health', wrap(() => {
     subscription,
     apiKeyStripped: API_KEY_STRIPPED,
     lastCrash: lastCrash(),
+    lastKilled: runstate.lastUnexpectedStop(),
     uptimeSec: Math.round(process.uptime()),
     platform: `${process.platform}-${process.arch}`,
     node: process.versions.node,
@@ -296,6 +298,7 @@ startUsagePolling();
 startScheduler(sessions.send);
 setInterval(() => { projects.sweepEphemeral(); for (const x of store.state.sessions) memory.consolidate(x.id); }, 60_000).unref();
 server.listen(PORT, HOST, () => {
+  runstate.boot();
   sessions.recoverInterrupted();
   console.log(`\n  ⛏  Underground Fortress is open at http://${HOST}:${PORT}${MOCK ? '  (mock mode: no real Claude calls)' : ''}\n`);
 });

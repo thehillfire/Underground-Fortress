@@ -40,6 +40,7 @@ function serverUp() {
   $('#asleep').hidden = true;
 }
 
+let wasDown = false;   // the socket dropped at least once: say CONNECTED (with a chime) when it's back
 let state = null;
 let selected = null;   // session id | 'lidia' | null
 let tab = null;        // which panel is open
@@ -70,10 +71,11 @@ function connect() {
   };
   ws.onclose = (ev) => {
     if (ev.code === 4401) { fetch('/api/auth/refresh', { method: 'POST' }).then(r => (r.ok ? connect() : deck.showLogin(() => connect()))); return; }
-    $('#conn').textContent = '● reconnecting'; serverDown(); setTimeout(connect, 1500);
+    $('#conn').textContent = '● reconnecting'; wasDown = true; serverDown(); setTimeout(connect, 1500);
   };
   ws.onopen = () => {
     $('#conn').textContent = '';
+    if (wasDown) { wasDown = false; chime(); toast('Connected'); }
     serverUp();
     // Tell the fortress Jav's real timezone (the phone's Linux layer thinks it's UTC).
     api('POST', '/api/client', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(() => {});
@@ -750,6 +752,9 @@ function mountSettings() {
       <label>Skill sources (GitHub repos, one per line) <textarea id="g-src" rows="3">${esc(st.skillSources.join('\n'))}</textarea></label>
       <button class="primary">Save</button>
     </form>
+    <h4>Why does it stop?</h4>
+    <div class="card"><div id="g-stable" class="muted">Checking…</div></div>
+    <p class="muted small">If it keeps stopping: (1) Android settings → Apps → Termux → Battery → <b>Unrestricted</b> (and the same for Fortress launcher). (2) Android 14+: Settings → Developer options → <b>Disable child process restrictions</b>. Older Android: in Termux run <b>fortress fix-killer</b>. The launcher's watchdog restarts the fortress when it dies, but those settings stop it dying.</p>
     <h4>One-tap launcher</h4>
     <div class="card"><div><b>Open Fortress without opening Termux</b><div class="muted small">A small Android app. Tap its icon: it wakes the fortress in the background, waits until it's up, then opens the app. Install it once (Android asks you to allow installs from this browser), open it, and allow "Run commands in Termux environment".</div></div></div>
     <a class="btn" id="g-launcher" href="/downloads/fortress-launcher.apk" download hidden>DOWNLOAD LAUNCHER</a>
@@ -802,6 +807,10 @@ function mountSettings() {
   $('#sys-alive').onclick = async () => { try { const r = await api('POST', '/api/system/keep-alive'); toast(r.message); } catch (err) { toast(err.message); } };
   $('#g-sched').querySelectorAll('[data-unsched]').forEach(b => b.onclick = async () => { await api('DELETE', `/api/schedules/${b.dataset.unsched}`); b.closest('.sched-row').remove(); });
   api('GET', '/api/health').then(h => {
+    const k = h.lastKilled;
+    $('#g-stable').innerHTML = k
+      ? `<b>Android stopped the fortress</b> ${new Date(k.diedAbout).toLocaleString()} after about ${k.uptimeMin} min of running. That's Android killing Termux, not a crash. Fix below.`
+      : 'No outside shutdowns recorded this week.';
     const line = h.mock ? '<b>Mock mode.</b> Survivors are fake; no Claude usage.'
       : !h.subscription ? '<b class="red">Not signed in.</b> On the phone run <code>fortress login</code>, then <code>/login</code> with your Claude account.'
       : '<b style="color:var(--green)">Signed in with your Claude subscription.</b> No API key in use.';
