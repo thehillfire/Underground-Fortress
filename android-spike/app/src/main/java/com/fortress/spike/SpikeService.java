@@ -136,8 +136,9 @@ public class SpikeService extends Service {
 
     private int safeExit() { try { return child.exitValue(); } catch (Exception e) { return -1; } }
 
+    /** Process.pid() only exists on newer Android; ask for it by reflection so the app runs on older ones too. */
     private static long pid(Process p) {
-        try { return p.pid(); } catch (Throwable t) { return -1; }
+        try { return (Long) Process.class.getMethod("pid").invoke(p); } catch (Throwable t) { return -1; }
     }
 
     /** "battery 73% (charging no) · 412 mA now": the drain is the number that matters. */
