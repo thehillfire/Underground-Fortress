@@ -7,6 +7,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { oneShot, runCaptain, runReview, mockTools } from './agent.js';
+import { lane } from './pool.js';
 import { store, SETTINGS_KEYS, PERMISSION_MODES, checkSettings } from './store.js';
 import * as repos from './repos.js';
 import { mcpServersFor } from './connectors.js';
@@ -300,7 +301,7 @@ Rules:
 - "escalate" only for: taste or direction you truly cannot infer, money, credentials, destructive or irreversible choices, scope changes, or an agent that is finished and you have no idea where to take it next. message_to_jav must say what the agent did, what it asked or where it is stuck, why you can't decide, and your 2-3 options with the one you would pick. Short and plain, like a text.
 - Use "delegate" whenever a teammate is waiting on this agent's output (leads found -> the outreach agent), even when the decision is "done". The instruction must carry the context: what was produced and where it is. Never delegate to the reporting agent itself.
 - Set health "stalled" when it is going in circles or repeating failures; a fellow owner will be sent to help.`;
-  const { text, costUsd, thinking } = await oneShot({ system: PERSONA, prompt, model: st.settings.lidiaModel, onThinking: live.onThinking });
+  const { text, costUsd, thinking } = await lane(1, () => oneShot({ system: PERSONA, prompt, model: st.settings.lidiaModel, onThinking: live.onThinking }));
   store.addSpend(costUsd, 'lidia');
   const d = extractJson(text);
   if (!d || !['continue', 'done', 'escalate'].includes(d.decision)) {
@@ -337,7 +338,7 @@ Check the claim against the goal. Judge from BOTH the workspace files and the to
 Reply with ONLY JSON: {"verified":true|false,"gaps":["<specific thing that is missing or wrong>"],"summary":"<one sentence>"}`;
   let v = null;
   try {
-    const out = await runReview({ cwd: sessions.cwdFor(s), prompt, system, model: store.state.settings.lidiaModel });
+    const out = await lane(1, () => runReview({ cwd: sessions.cwdFor(s), prompt, system, model: store.state.settings.lidiaModel }));
     store.addSpend(out.costUsd, 'lidia');
     v = extractJson(out.text);
   } catch { return; }     // couldn't check: take the review as it stands
@@ -382,9 +383,10 @@ TEXTING STYLE: this is a text thread on Jav's phone. React to every text from Ja
 DELEGATION: you run the fortress; the agents do the hands-on work. When Jav asks for real work, give it to an agent: reuse one whose project fits (call fortress_status first and don't create duplicates), otherwise create one with a COMPLETE brief. After create_agent or message_agent, read the tool result: say an agent is working only if the result says it started. If it failed or hasn't started, say so plainly and fix it. Never say you created, sent, assigned or scheduled something unless you called the tool for it in this reply.
 LEARNING: when Jav states a preference or rule, or corrects you ("always…", "never…", "I prefer…"), save it with remember_preference. You read these when you review agents, together with his recent words, so follow the trend in how he communicates.
 Use your tools; never just describe what you would do. When Jav asks how things are going, call fortress_status (and read_agent where useful) first.`;
-  const out = await runCaptain({ prompt: promptWithFiles(prompt, saved, { inlineText: true }), resume: st.lidiaSessionId,
+  // Jav's chat goes first in line (priority 2), ahead of reviews and agent turns.
+  const out = await lane(2, () => runCaptain({ prompt: promptWithFiles(prompt, saved, { inlineText: true }), resume: st.lidiaSessionId,
     model: st.settings.lidiaModel, effort: st.settings.lidiaEffort || undefined, system,
-    server: captainServer(), extraServers: mcpServersFor(), onTool, onInit: noteConnectors, onThinking: live.onThinking, onText: live.onText });
+    server: captainServer(), extraServers: mcpServersFor(), onTool, onInit: noteConnectors, onThinking: live.onThinking, onText: live.onText }));
   if (out.sessionId) st.lidiaSessionId = out.sessionId;
   store.addSpend(out.costUsd, 'lidia');
   return { text: out.text || '', thinking: out.thinking || '' };

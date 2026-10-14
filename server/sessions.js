@@ -4,6 +4,8 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { store, id, WORKSPACES, PERMISSION_MODES } from './store.js';
 import { runTurn, runReview } from './agent.js';
+import * as pool from './pool.js';
+import * as battery from './battery.js';
 import { moneyHooks } from './guard.js';
 import { installed as installedSkills } from './skills.js';
 import { peakUsage, refreshSoon } from './usage.js';
@@ -213,29 +215,19 @@ export function update(sid, patch) {
 }
 
 // ------------------------------------------------------------------ concurrency
-const slots = { active: 0, waiters: [] };
-const maxSlots = () => Math.max(1, Math.min(12, Number(store.state.settings.maxConcurrent) || 3));
+// Every model call (agent turns, peer reviews, Lidia) shares the line in pool.js, so the cap holds for all of them.
+pool.setCap(() => store.state.settings.maxConcurrent);
 /** Resolves true when this turn may start, false if it was stopped while waiting in line. */
-function acquireSlot(s, ac) {
-  if (slots.active < maxSlots()) { slots.active++; return Promise.resolve(true); }
-  return new Promise((resolve) => {
-    const w = { s, resolve };
-    slots.waiters.push(w);
-    const mark = () => slots.waiters.forEach((x, i) => { x.s.waitingSlot = i + 1; setStatus(x.s, 'working', `waiting for a free slot (${i + 1} in line)`); });
-    mark();
-    ac.signal.addEventListener('abort', () => {
-      const i = slots.waiters.indexOf(w);
-      if (i >= 0) { slots.waiters.splice(i, 1); delete s.waitingSlot; resolve(false); mark(); }
-    }, { once: true });
+async function acquireSlot(s, ac) {
+  const ok = await pool.take({
+    signal: ac.signal,
+    onWait: (n) => { s.waitingSlot = n; setStatus(s, 'working', `waiting for a free slot (${n} in line)`); },
   });
+  delete s.waitingSlot;
+  return ok;
 }
-function releaseSlot() {
-  slots.active = Math.max(0, slots.active - 1);
-  while (slots.waiters.length && slots.active < maxSlots()) {
-    const w = slots.waiters.shift(); slots.active++; delete w.s.waitingSlot; w.resolve(true);
-  }
-}
-export const slotInfo = () => ({ active: slots.active, waiting: slots.waiters.length, max: maxSlots() });
+const releaseSlot = () => pool.give();
+export const slotInfo = () => pool.info();
 
 // ------------------------------------------------------------------ live activity
 /** Post what the agent is doing right now (built from its real log) into its chat, with its latest screenshot. */
@@ -394,6 +386,12 @@ export async function confirmAlive(sid, since, ms = 20000) {
 async function turn(s, text, from, saved = [], logged = false) {
   if (from === 'jav-via-lidia') from = 'lidia';
   if (isKilled()) { log(s, 'system', 'The kill switch is on; this turn did not run.'); setStatus(s, 'idle', 'halted'); return; }
+  // Battery forecast says the phone is about to hit its floor: only Jav's own messages still run.
+  if (from !== 'jav' && battery.holdBackNewWork()) {
+    log(s, 'system', `Battery is low (${battery.forecast().level}%): this step waits until the phone charges. Jav's messages still go through.`);
+    setStatus(s, 'idle', 'resting: battery low');
+    return;
+  }
   delete s.interrupted;
   delete s.escalation;
   s.turnStart = Date.now(); s.steps = 0; s.curTool = null;
@@ -576,8 +574,8 @@ async function report(s, result, isError) {
   refreshSoon();
   // Near the plan limit: keep doing the work, but skip the optional extras (reviews, polish rounds).
   const peak = peakUsage();
-  const tight = peak != null && peak >= (cfg.reserveAt ?? 85);
-  if (tight && cfg.refineEnabled && !s.warnedTight) { s.warnedTight = true; store.feed(`Usage at ${peak}%: pausing peer reviews and polish rounds to save your limit.`, 'alert'); }
+  const tight = (peak != null && peak >= (cfg.reserveAt ?? 85)) || battery.tight();
+  if (tight && cfg.refineEnabled && !s.warnedTight) { s.warnedTight = true; store.feed('Pausing peer reviews and polish rounds to save your plan limit and battery.', 'alert'); }
   if (!tight) s.warnedTight = false;
   const refine = cfg.refineEnabled && !tight;
   s.errorStreak = isError ? (s.errorStreak || 0) + 1 : 0;
@@ -663,7 +661,7 @@ Inspect the actual work in this workspace (files, output) before judging. Then r
 
   let r;
   try {
-    const out = await runReview({ cwd: cwdFor(owner), prompt, system, model: owner.model || store.state.settings.model });
+    const out = await pool.lane(0, () => runReview({ cwd: cwdFor(owner), prompt, system, model: owner.model || store.state.settings.model }));
     store.addSpend(out.costUsd, critic?.id || 'lidia');
     if (critic) critic.costUsd += out.costUsd || 0;
     r = extractJson(out.text);

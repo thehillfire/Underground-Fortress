@@ -51,7 +51,8 @@ const DEFAULT_STATE = {
     reduceMotion: false,
     colorblind: 'none',           // none | protanopia | deuteranopia | tritanopia
     soundOn: false,
-    maxConcurrent: 3,             // agents working at the same time; the rest wait in line (a phone can't run many Claude sessions at once)
+    maxConcurrent: 3,             // every Claude call at once (agents, reviews, Lidia's chat share this); the rest wait in line (a phone can't run many Claude sessions at once)
+    batteryFloor: 20,             // % battery the phone should not drop under: near it, new background work waits for charging
   },
   standingOrders: 'Keep sessions moving toward their goal. Prefer small, verifiable steps. Ask Jav when a decision changes scope, spends money, deletes data, or touches production.',
   projects: [],      // rooms; each holds any number of agents
@@ -170,7 +171,7 @@ class Store extends EventEmitter {
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'];
 // Settings Jav (and Lidia, on his behalf) may change.
-export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort', 'chatStyle', 'chatColor', 'resumeOnRestart', 'lidiaVerify', 'worldTheme', 'reduceMotion', 'colorblind', 'soundOn', 'maxConcurrent'];
+export const SETTINGS_KEYS = ['model', 'lidiaModel', 'permissionMode', 'lidiaAutopilot', 'maxAutoTurns', 'skillSources', 'autoApproveConnectors', 'refineEnabled', 'refineRounds', 'reviewEvery', 'reserveAt', 'effort', 'lidiaEffort', 'chatStyle', 'chatColor', 'resumeOnRestart', 'lidiaVerify', 'worldTheme', 'reduceMotion', 'colorblind', 'soundOn', 'maxConcurrent', 'batteryFloor'];
 export const WORLD_THEMES = ['fortress', 'spaceship', 'westernTown', 'pirateCove', 'cyberpunk'];
 
 /** Validate a settings change; returns an error message or null. */
@@ -181,6 +182,7 @@ export function checkSettings(c) {
   if ('worldTheme' in c && !WORLD_THEMES.includes(c.worldTheme)) return `worldTheme must be one of ${WORLD_THEMES.join(', ')}`;
   if ('colorblind' in c && !['none', 'protanopia', 'deuteranopia', 'tritanopia'].includes(c.colorblind)) return 'colorblind must be none, protanopia, deuteranopia or tritanopia';
   if ('maxConcurrent' in c && !(Number.isInteger(c.maxConcurrent) && c.maxConcurrent >= 1 && c.maxConcurrent <= 12)) return 'maxConcurrent must be a whole number from 1 to 12';
+  if ('batteryFloor' in c && !(Number.isInteger(c.batteryFloor) && c.batteryFloor >= 5 && c.batteryFloor <= 95)) return 'batteryFloor must be a whole number from 5 to 95';
   for (const k of ['reduceMotion', 'soundOn']) if (k in c && typeof c[k] !== 'boolean') return `${k} must be true or false`;
   return null;
 }

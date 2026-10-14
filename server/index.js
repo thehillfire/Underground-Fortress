@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws';
 import { store, ROOT, id, SETTINGS_KEYS, checkSettings, backupAndReset } from './store.js';
 import { z as z0 } from 'zod';
 import * as sessions from './sessions.js';
+import * as battery from './battery.js';
 import * as projects from './projects.js';
 import * as skills from './skills.js';
 import * as repos from './repos.js';
@@ -88,6 +89,9 @@ app.get('/api/state', wrap(() => snapshot()));
 
 // Which Claude account will the dwellers run on?
 app.get('/api/slots', wrap(() => sessions.slotInfo()));
+// The phone's battery: the Android app posts { level, charging } now and then; the forecast says what the next hour looks like.
+app.post('/api/battery', wrap((req) => battery.record(req.body || {})));
+app.get('/api/battery', wrap(() => battery.forecast()));
 app.get('/api/health', wrap(() => {
   const home = os.homedir();
   const subscription = !!process.env.CLAUDE_CODE_OAUTH_TOKEN || fs.existsSync(path.join(home, '.claude', '.credentials.json'));
