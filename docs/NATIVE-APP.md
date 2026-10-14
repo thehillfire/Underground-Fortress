@@ -57,7 +57,7 @@ manual start, no waiting. The app owns the server.
 3. Question 4: run the fortress under the service with the screen off for 8 hours.
 4. Only after 1–4 pass: build the real app (first-run install, UI, updates).
 
-If question 1 or 2 fails, the plan falls back to option 2 (the server on a computer or always-on machine) and we say so, rather than stacking workarounds.
+Decision (Jav): the phone is the only host. No computer or server fallback. If question 1 or 2 fails, the project stops and we say so, rather than stacking workarounds. Every blocker above must pass on the phone before the app is built.
 
 ## Not decided yet
 
