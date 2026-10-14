@@ -37,7 +37,9 @@ jobs:
           exec python3 -m ziglang c++ -target aarch64-linux-musl "$@"
           SH
           chmod +x /tmp/zcc /tmp/zcxx
-          CC=/tmp/zcc CXX=/tmp/zcxx ./configure --cross-compiling --dest-cpu=arm64 --dest-os=linux --without-intl --without-npm --without-corepack --without-inspector --openssl-no-asm || (cat config.log | tail -80; exit 1)
+          # Target code goes through Zig (aarch64 musl). Helper programs that run during the build
+          # (node_js2c, mksnapshot) run on this x86 runner, so they must use the host compiler.
+          CC=/tmp/zcc CXX=/tmp/zcxx CC_host=gcc CXX_host=g++ LINK_host=g++ ./configure --cross-compiling --dest-cpu=arm64 --dest-os=linux --without-intl --without-npm --without-corepack --without-inspector --openssl-no-asm || (cat config.log | tail -80; exit 1)
       - name: Build
         working-directory: node-v${{ env.NODE_VERSION }}
         run: make -j"$(nproc)" || (make V=1 | tail -200; exit 1)
