@@ -3,11 +3,11 @@ name: Build Node for Android (musl, arm64)
 # The result is the Node runtime the native app needs to run the fortress server on the phone.
 # Not yet proven on a phone: the artifact is only a build result until it runs there.
 on:
-  workflow_dispatch:
-    inputs:
-      node_version:
-        description: Node.js version to build
-        default: "22.23.3"
+  push:
+    paths: ['.github/workflows/node-musl.yml', 'native/nodebuild/**']
+  workflow_dispatch: {}
+env:
+  NODE_VERSION: "22.23.3"
 permissions:
   contents: read
 jobs:
@@ -23,10 +23,10 @@ jobs:
           sudo apt-get update && sudo apt-get install -y python3 make g++ ninja-build xz-utils
       - name: Fetch Node.js source
         run: |
-          curl -fsSL -o node.tar.xz "https://nodejs.org/dist/v${{ inputs.node_version }}/node-v${{ inputs.node_version }}.tar.xz"
+          curl -fsSL -o node.tar.xz "https://nodejs.org/dist/v${{ env.NODE_VERSION }}/node-v${{ env.NODE_VERSION }}.tar.xz"
           tar xJf node.tar.xz
       - name: Configure for aarch64 musl with Zig
-        working-directory: node-v${{ inputs.node_version }}
+        working-directory: node-v${{ env.NODE_VERSION }}
         run: |
           cat > /tmp/zcc <<'SH'
           #!/bin/sh
@@ -39,14 +39,14 @@ jobs:
           chmod +x /tmp/zcc /tmp/zcxx
           CC=/tmp/zcc CXX=/tmp/zcxx ./configure --cross-compiling --dest-cpu=arm64 --dest-os=linux --without-intl --without-npm --without-corepack --without-inspector --openssl-no-asm || (cat config.log | tail -80; exit 1)
       - name: Build
-        working-directory: node-v${{ inputs.node_version }}
+        working-directory: node-v${{ env.NODE_VERSION }}
         run: make -j"$(nproc)" || (make V=1 | tail -200; exit 1)
       - name: Check the binary
-        working-directory: node-v${{ inputs.node_version }}
+        working-directory: node-v${{ env.NODE_VERSION }}
         run: |
           file out/Release/node
           python3 -c "import sys; print('size', __import__('os').path.getsize('out/Release/node'))"
       - uses: actions/upload-artifact@v4
         with:
           name: node-linux-arm64-musl
-          path: node-v${{ inputs.node_version }}/out/Release/node
+          path: node-v${{ env.NODE_VERSION }}/out/Release/node
