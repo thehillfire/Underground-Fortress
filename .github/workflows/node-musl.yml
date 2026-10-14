@@ -1,0 +1,52 @@
+name: Build Node for Android (musl, arm64)
+# Experimental. Builds Node.js from source for linux arm64 musl, using Zig as the C/C++ compiler.
+# The result is the Node runtime the native app needs to run the fortress server on the phone.
+# Not yet proven on a phone: the artifact is only a build result until it runs there.
+on:
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: Node.js version to build
+        default: "22.23.3"
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install Zig and build tools
+        run: |
+          pip install ziglang==0.17.0
+          sudo apt-get update && sudo apt-get install -y python3 make g++ ninja-build xz-utils
+      - name: Fetch Node.js source
+        run: |
+          curl -fsSL -o node.tar.xz "https://nodejs.org/dist/v${{ inputs.node_version }}/node-v${{ inputs.node_version }}.tar.xz"
+          tar xJf node.tar.xz
+      - name: Configure for aarch64 musl with Zig
+        working-directory: node-v${{ inputs.node_version }}
+        run: |
+          cat > /tmp/zcc <<'SH'
+          #!/bin/sh
+          exec python3 -m ziglang cc -target aarch64-linux-musl "$@"
+          SH
+          cat > /tmp/zcxx <<'SH'
+          #!/bin/sh
+          exec python3 -m ziglang c++ -target aarch64-linux-musl "$@"
+          SH
+          chmod +x /tmp/zcc /tmp/zcxx
+          CC=/tmp/zcc CXX=/tmp/zcxx ./configure --cross-compiling --dest-cpu=arm64 --dest-os=linux --without-intl --without-npm --without-corepack --without-inspector --openssl-no-asm || (cat config.log | tail -80; exit 1)
+      - name: Build
+        working-directory: node-v${{ inputs.node_version }}
+        run: make -j"$(nproc)" || (make V=1 | tail -200; exit 1)
+      - name: Check the binary
+        working-directory: node-v${{ inputs.node_version }}
+        run: |
+          file out/Release/node
+          python3 -c "import sys; print('size', __import__('os').path.getsize('out/Release/node'))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-linux-arm64-musl
+          path: node-v${{ inputs.node_version }}/out/Release/node
